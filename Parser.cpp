@@ -1,6 +1,6 @@
 #include "Parser.h"
 #include <string>
-
+#include <iostream>
 // Heavily inspired by Crafting Interpreters by Robert Nystrom
 
 enum Precedence : unsigned int {
@@ -80,14 +80,13 @@ static std::unique_ptr<Expression> parsePrefixOperator(Parser& parser, Token con
 [[nodiscard]]
 static std::unique_ptr<Expression> parseBinaryOperator(Parser& parser, std::unique_ptr<Expression> prev,
                                                        Token consumed) {
-    auto otherOperand = parser.parseExpression();
-    return std::make_unique<BinaryOperator>(consumed.type, prev, otherOperand);
+    return std::make_unique<BinaryOperator>(consumed.type, std::move(prev),  parser.parseExpression());
 }
 
 [[nodiscard]]
 static std::unique_ptr<Expression> parsePostfixOperator(Parser& parser, std::unique_ptr<Expression> prev,
                                                         Token consumed) {
-    return std::make_unique<PostfixOperator>(consumed.type, prev);
+    return std::make_unique<PostfixOperator>(consumed.type, std::move(prev));
 }
 
 [[nodiscard]]
@@ -96,7 +95,7 @@ std::unique_ptr<Expression> Parser::parseExprWithPrecedence(Precedence prec) {
     auto prefixParser = subParsers[token.type].prefix;
 
     if (prefixParser == nullptr)
-        throw std::runtime_error("Error parsing token " + token.toString());
+        throw std::runtime_error("Error parsing token " + token.toString()+". Expected an expression");
 
     auto parsedPrefix = prefixParser(*this, token);
 
@@ -143,6 +142,7 @@ void registerAllSubParsers() {
 
 AST Parser::parse() {
     registerAllSubParsers();
-    //    assertNextTokenIsOfType(TokenType::Semicolon, tokens.begin());
-    return AST{};
+    auto firstExpr = parseExpression();
+    std::cout<<firstExpr->toString()<<std::endl;
+    return {};
 }

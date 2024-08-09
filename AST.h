@@ -7,7 +7,9 @@
 
 class AST {};
 
-struct Expression {};
+struct Expression {
+    virtual std::string toString() { return "not implemented"; }
+};
 
 struct ConditionalExpression : Expression {
     std::unique_ptr<Expression> condition;
@@ -44,4 +46,3 @@ struct PostfixOperator : Expression {
     std::unique_ptr<Expression> operand;
     PostfixOperator(TokenType type, std::unique_ptr<Expression> operand) : type{type}, operand{std::move(operand)} {}
 };
-
