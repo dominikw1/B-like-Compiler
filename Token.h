@@ -68,7 +68,7 @@ struct Token {
     TokenType type;
     std::string_view lexeme;
     // line num?
-    Token(TokenType type, std::string_view lexeme) : type{type}, lexeme{lexeme} {}
+    Token(std::string_view lexeme, TokenType type) : type{type}, lexeme{lexeme} {}
 
     [[nodiscard]]
     std::string toString() {

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -8,144 +9,171 @@
 
 #include "Token.h"
 
-constexpr TokenType getTokenTypeForOneCharLiteral(std::string_view lexeme) {
-    auto oneChar = lexeme.front();
-    switch (oneChar) {
+constexpr auto isNumber(char c) {
+    // maybe look at hex / octa
+    return c >= '0' && c <= '9';
+};
+
+bool isNextChar(auto curr, auto end, char c) {
+    if (curr + 1 == end) {
+        return false;
+    }
+    return *(curr + 1) == c;
+}
+
+constexpr std::string_view parseNumber(auto& curr, auto end) {
+    auto numStart = curr;
+    while (curr != end) {
+        if (!isNumber(*curr))
+            break;
+        ++curr;
+    }
+    return std::string_view{numStart, curr};
+}
+
+constexpr static std::optional<std::string_view> tryParseExactMatch(auto& curr, auto end, std::string_view match) {
+    auto helper = curr;
+    for (auto& c : match) {
+        if (isNextChar(helper, end, c)) {
+            ++helper;
+        } else {
+            return {};
+        }
+    }
+    ++helper;
+    return std::string_view{curr, helper};
+}
+
+constexpr static std::optional<Token> tryParseKeyword(auto& curr, auto end) {
+    if (auto m = tryParseExactMatch(curr, end, "while"))
+        return Token{*m, TokenType::While};
+    if (auto m = tryParseExactMatch(curr, end, "if"))
+        return Token{*m, TokenType::If};
+    if (auto m = tryParseExactMatch(curr, end, "else"))
+        return Token{*m, TokenType::Else};
+    if (auto m = tryParseExactMatch(curr, end, "auto"))
+        return Token{*m, TokenType::Auto};
+    if (auto m = tryParseExactMatch(curr, end, "register"))
+        return Token{*m, TokenType::Register};
+    if (auto m = tryParseExactMatch(curr, end, "return"))
+        return Token{*m, TokenType::Return};
+    return {};
+}
+
+constexpr static std::optional<Token> tryParseIdentifier(auto& curr, auto end) {
+    auto it = curr;
+    if (!std::isalpha(*it) && *it != '_')
+        return {};
+    ++it;
+    while (it != end && (std::isalnum(*it) || *it == '_')) {
+        ++it;
+    }
+    Token ret{std::string_view{curr, it}, TokenType::Identifier};
+    curr = it;
+    return ret;
+}
+
+// precondition: curr - curr+n is valid view
+std::string_view incrementCurr(auto& currIt, std::size_t len) {
+    auto ret = std::string_view{currIt, len};
+    currIt += len;
+    return ret;
+}
+
+std::optional<Token> lexNextToken(auto& curr, auto end) {
+    if (curr == end)
+        return {};
+    std::cout << "Lexing " << *curr << std::endl;
+    if (isNumber(*curr)) {
+        return Token{parseNumber(curr, end), TokenType::Number};
+    }
+
+    switch (*curr) {
+    case ' ':
+    case '\t':
+    case '\n':
+        return lexNextToken(++curr, end);
     case '+':
-        return TokenType::Plus;
+        return Token{incrementCurr(curr, 1), TokenType::Plus};
     case '-':
-        return TokenType::Minus;
+        return Token{incrementCurr(curr, 1), TokenType::Minus};
     case ',':
-        return TokenType::Comma;
+        return Token{incrementCurr(curr, 1), TokenType::Comma};
     case '.':
-        return TokenType::Dot;
+        return Token{incrementCurr(curr, 1), TokenType::Dot};
     case '/':
-        return TokenType::Slash;
+        return Token{incrementCurr(curr, 1), TokenType::Slash};
     case '*':
-        return TokenType::Star;
+        return Token{incrementCurr(curr, 1), TokenType::Star};
     case '!':
-        return TokenType::Exclamation_Mark;
+        if (isNextChar(curr, end, '='))
+            return Token{incrementCurr(curr, 2), TokenType::Uneqal};
+        return Token{incrementCurr(curr, 1), TokenType::Exclamation_Mark};
     case '=':
-        return TokenType::Assignment;
+        return Token{incrementCurr(curr, 1), TokenType::Assignment};
     case '>':
-        return TokenType::Larger;
+        if (isNextChar(curr, end, '='))
+            return Token{incrementCurr(curr, 2), TokenType::Larger_Equal};
+        if (isNextChar(curr, end, '>'))
+            return Token{incrementCurr(curr, 2), TokenType::Bitshift_Right};
+        return Token{incrementCurr(curr, 1), TokenType::Larger};
     case '<':
-        return TokenType::Smaller;
+        if (isNextChar(curr, end, '='))
+            return Token{incrementCurr(curr, 2), TokenType::Smaller_Equal};
+        if (isNextChar(curr, end, '>'))
+            return Token{incrementCurr(curr, 2), TokenType::Bitshift_Left};
+        return Token{incrementCurr(curr, 1), TokenType::Smaller};
     case '^':
-        return TokenType::Xor;
+        return Token{incrementCurr(curr, 1), TokenType::Xor};
     case '&':
-        return TokenType::And_Bit;
+        if (isNextChar(curr, end, '&'))
+            return Token{incrementCurr(curr, 2), TokenType::And_Logical};
+        return Token{incrementCurr(curr, 1), TokenType::And_Bit};
     case '|':
-        return TokenType::Or_Bit;
+        if (isNextChar(curr, end, '|'))
+            return Token{incrementCurr(curr, 2), TokenType::Or_Logical};
+        return Token{incrementCurr(curr, 1), TokenType::Or_Bit};
     case '~':
-        return TokenType::Tilde;
+        return Token{incrementCurr(curr, 1), TokenType::Tilde};
     case ';':
-        return TokenType::Semicolon;
+        return Token{incrementCurr(curr, 1), TokenType::Semicolon};
     case '(':
-        return TokenType::Left_Parenthesis;
+        return Token{incrementCurr(curr, 1), TokenType::Left_Parenthesis};
     case ')':
-        return TokenType::Right_Parenthesis;
+        return Token{incrementCurr(curr, 1), TokenType::Right_Parenthesis};
     case '[':
-        return TokenType::Left_Bracket;
+        return Token{incrementCurr(curr, 1), TokenType::Left_Bracket};
     case ']':
-        return TokenType::Right_Bracket;
+        return Token{incrementCurr(curr, 1), TokenType::Right_Bracket};
     case '{':
-        return TokenType::Left_Brace;
+        return Token{incrementCurr(curr, 1), TokenType::Left_Brace};
     case '}':
-        return TokenType::Right_Brace;
+        return Token{incrementCurr(curr, 1), TokenType::Right_Brace};
     case '%':
-        return TokenType::Mod;
-    default:
-        return TokenType::Undecided;
+        return Token{incrementCurr(curr, 1), TokenType::Mod};
+    case '@':
+        return Token{incrementCurr(curr, 1), TokenType::Sizespec};
     }
-}
-
-constexpr TokenType getTokenTypeForTwoCharLiteral(std::string_view lexeme) {
-    auto firstChar = lexeme.front();
-    switch (firstChar) {
-    case '!':
-        return lexeme.at(2) == '=' ? TokenType::Uneqal : TokenType::ERROR;
-    case '>':
-        return lexeme.at(2) == '=' ? TokenType::Larger_Equal
-                                   : (lexeme.at(2) == '>' ? TokenType::Bitshift_Right : TokenType::ERROR);
-    case '<':
-        return lexeme.at(2) == '=' ? TokenType::Smaller_Equal
-                                   : (lexeme.at(2) == '>' ? TokenType::Bitshift_Left : TokenType::ERROR);
-    case '&':
-        return lexeme.at(2) == '&' ? TokenType::And_Logical : TokenType::ERROR;
-    case '|':
-        return lexeme.at(2) == '|' ? TokenType::Or_Logical : TokenType::ERROR;
-    default:
-        return TokenType::Undecided;
-    };
-}
-
-constexpr TokenType getTokenTypeForComplexLiteral(std::string_view lexeme) {
-    constexpr auto isNumber = [](std::string_view lex) {
-        return lex.size() != 0 && std::all_of(lex.begin(), lex.end(), [](char c) { return c >= '0' && c <= '9'; });
-    };
-    if (isNumber(lexeme))
-        return TokenType::Number;
-    if (lexeme.at(0) == '@' && isNumber(lexeme.substr(1)))
-        return TokenType::Sizespec;
-    if (lexeme == "while")
-        return TokenType::While;
-    if (lexeme == "if")
-        return TokenType::If;
-    if (lexeme == "else")
-        return TokenType::Else;
-    if (lexeme == "auto")
-        return TokenType::Auto;
-    if (lexeme == "register")
-        return TokenType::Register;
-    if (lexeme == "return")
-        return TokenType::Return;
-
-    const char firstChar = lexeme.front();
-    if (std::isalpha(firstChar) || firstChar == '_') {
-        if (std::all_of(lexeme.begin(), lexeme.end(), [](char c) { return std::isalnum(c) || c == '_'; }))
-            return TokenType::Identifier;
-        else
-            return TokenType::ERROR;
+    if (auto k = tryParseKeyword(curr, end)) {
+        return *k;
     }
-    return TokenType::ERROR;
-}
-
-constexpr TokenType getTokenType(std::string_view lexeme) {
-    if (lexeme.size() == 1) {
-        const auto type = getTokenTypeForOneCharLiteral(lexeme);
-        if (type != TokenType::Undecided)
-            return type;
-    }
-    if (lexeme.size() == 2) {
-        const auto type = getTokenTypeForTwoCharLiteral(lexeme);
-        if (type != TokenType::Undecided)
-            return type;
+    if (auto i = tryParseIdentifier(curr, end)) {
+        return *i;
     }
 
-    return getTokenTypeForComplexLiteral(lexeme);
-}
-
-constexpr Token constructToken(std::string_view lexeme) {
-    if (lexeme.empty())
-        return Token{TokenType::ERROR, "Empty lexeme"};
-    TokenType type = getTokenType(lexeme);
-    return Token{type, lexeme};
+    return Token{"", TokenType::ERROR};
+    // now there are not many options left..
 }
 
 auto scan(std::string_view program) {
-    using std::operator""sv;
-    constexpr auto lineDelim{"\n"sv};
-    constexpr auto wordDelim(" "sv);
-    auto tokens = std::views::split(program, lineDelim) |
-                  std::views::transform([wordDelim](auto&& line) { return std::views::split(line, wordDelim); }) |
-                  std::views::join | std::views::filter([](auto&& word) { return !word.empty(); }) |
-                  std::views::transform([&](auto&& lexeme) {
-                      return Token{getTokenType(std::string_view(lexeme)), std::string_view(lexeme)};
-                  });
-    std::vector<Token> mergedTokens;
-    for (auto t : tokens) {
-        mergedTokens.push_back(t);
+    auto curr = program.begin();
+    std::vector<Token> tokens;
+    while (curr != program.end()) {
+        if (auto newToken = lexNextToken(curr, program.end())) {
+            tokens.push_back(*newToken);
+        } else {
+            break;
+        }
     }
-    return mergedTokens;
+    return tokens;
 }

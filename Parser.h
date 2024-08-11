@@ -5,6 +5,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <unordered_map>
 
