@@ -6,9 +6,22 @@
 #include <string>
 #include <vector>
 
+enum class ExpressionType {
+    Value,
+    Name,
+    PrefixOperator,
+    BinaryOperator,
+    PostfixOperator,
+    ExpressionStatement,
+    Assignment,
+    Scope,
+    If
+};
+
 struct Expression {
-    virtual std::string toString() { return "not implemented"; }
-    virtual bool isStatement() { return false; }
+    virtual std::string toString() const { return "not implemented"; }
+    virtual bool isStatement() const { return false; }
+    constexpr virtual ExpressionType getType() const = 0;
 };
 
 using Node = std::unique_ptr<Expression>;
@@ -23,19 +36,22 @@ class AST {
 struct Value : Expression {
     std::int64_t val;
     Value(std::int64_t v) : val{v} {}
-    std::string toString() override { return std::format("Value token with val {}", val); };
+    std::string toString() const override { return std::format("Value token with val {}", val); };
+    constexpr ExpressionType getType() const override { return ExpressionType::Value; }
 };
 
 struct Name : Expression {
     std::string_view literal;
     Name(std::string_view v) : literal{v} {}
-    std::string toString() override { return std::format("Name token with literal {}", literal); };
+    std::string toString() const override { return std::format("Name token with literal {}", literal); };
+    constexpr ExpressionType getType() const override { return ExpressionType::Name; }
 };
 
 struct PrefixOperator : Expression {
     TokenType type;
     Node operand;
     PrefixOperator(TokenType type, Node operand) : type{type}, operand{std::move(operand)} {}
+    constexpr ExpressionType getType() const override { return ExpressionType::PrefixOperator; }
 };
 
 struct BinaryOperator : Expression {
@@ -44,45 +60,50 @@ struct BinaryOperator : Expression {
     Node operand2;
     BinaryOperator(TokenType type, Node operand1, Node operand2)
         : type{type}, operand1{std::move(operand1)}, operand2{std::move(operand2)} {}
-    std::string toString() override {
+    std::string toString() const override {
         return std::format("BinOp {} - \n\t({}) \n\t({})", tokenTypeToString(type), operand1->toString(),
                            operand2->toString());
     };
+    constexpr ExpressionType getType() const override { return ExpressionType::BinaryOperator; }
 };
 
 struct PostfixOperator : Expression {
     TokenType type;
     Node operand;
     PostfixOperator(TokenType type, Node operand) : type{type}, operand{std::move(operand)} {}
+    constexpr ExpressionType getType() const override { return ExpressionType::PostfixOperator; }
 };
 
 struct Statement : Expression {
-    bool isStatement() override { return true; }
+    bool isStatement() const override { return true; }
 };
 
 struct ExpressionStatement : Statement {
     Node expression;
     ExpressionStatement(Node expr) : expression{std::move(expr)} {}
-    std::string toString() override {
+    std::string toString() const override {
         if (expression)
             return std::format("Statement: \n\t{}", expression->toString());
         return "Statement: Empty";
     }
+    constexpr ExpressionType getType() const override { return ExpressionType::ExpressionStatement; }
 };
 
 struct Assignment : Expression {
     Node left;
     Node right;
     Assignment(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {}
-    std::string toString() override {
+    std::string toString() const override {
         return std::format("Assignment: \n\t{} = {}", left->toString(), right->toString());
     }
+       constexpr ExpressionType getType() const override { return ExpressionType::Assignment; }
 };
 
 struct Scope : Statement {
     Node scoped;
     Scope(Node scoped) : scoped{std::move(scoped)} {}
-    std::string toString() override { return "{" + scoped->toString() + "}"; }
+    std::string toString() const override { return "{" + scoped->toString() + "}"; }
+       constexpr ExpressionType getType() const override { return ExpressionType::Scope; }
 };
 
 struct If : Statement {
@@ -91,8 +112,9 @@ struct If : Statement {
     Node elseBranch;
     If(Node condition, Node thenBranch, Node elseBranch = nullptr)
         : condition{std::move(condition)}, thenBranch{std::move(thenBranch)}, elseBranch{std::move(elseBranch)} {}
-    std::string toString() override {
+    std::string toString() const override {
         return std::format("If {} then {} else {}", condition->toString(), thenBranch->toString(),
                            elseBranch->toString());
     }
+       constexpr ExpressionType getType() const override { return ExpressionType::If; }
 };

@@ -12,7 +12,7 @@ enum class TokenType {
     Left_Brace,
     Right_Brace,
     Comma,
-   // Dot,
+    // Dot,
     Slash,
     Star,
     Exclamation_Mark,
@@ -82,4 +82,6 @@ struct Token {
     std::string toString() {
         return std::string(lexeme) + " of type " + std::string(tokenTypeToString(type));
     }
+
+    bool operator==(const Token& other) const { return type == other.type && lexeme == other.lexeme; }
 };

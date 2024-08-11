@@ -34,14 +34,14 @@ constexpr std::string_view parseNumber(auto& curr, auto end) {
 constexpr static std::optional<std::string_view> tryParseExactMatch(auto& curr, auto end, std::string_view match) {
     auto helper = curr;
     for (auto& c : match) {
-        if (isNextChar(helper, end, c)) {
+        if (helper != end && *helper == c) {
             ++helper;
         } else {
             return {};
         }
     }
-    ++helper;
-    return std::string_view{curr, helper};
+    curr = helper;
+    return match;
 }
 
 constexpr static std::optional<Token> tryParseKeyword(auto& curr, auto end) {
