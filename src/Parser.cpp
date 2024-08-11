@@ -106,7 +106,7 @@ static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedenc
 static Node parseScope(Parser& parser, Token consumed) {
     auto ret = std::make_unique<Scope>(parser.parseStatement());
     parser.consumeTokenOfType(TokenType::Right_Brace);
-    std::cout<<"parsed scope"<<std::endl;
+    std::cout << "parsed scope" << std::endl;
     return ret;
 }
 
@@ -122,11 +122,14 @@ static Node parseIf(Parser& parser, Token consumed) {
         }
         return std::make_unique<Scope>(parser.parseStatement());
     }();
+    std::cout << "Parsed then branch\n";
     auto elseBranch = [&parser]() -> Node {
         if (parser.isNextTokenOfType(TokenType::Else)) {
+            parser.consumeTokenOfType(TokenType::Else);
             if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
                 return parseScope(parser, *parser.consumeNextToken());
             }
+            std::cout << "Detected no explicit scope\n";
             return std::make_unique<Scope>(parser.parseStatement());
         }
         return nullptr;

@@ -18,6 +18,11 @@ enum class ExpressionType {
     If
 };
 
+#define NODE_AS_PTR(node, TYPE) (static_cast<const TYPE*>(node.get()))
+#define NODE_AS_REF(node, TYPE) (*NODE_AS_PTR(node, TYPE))
+#define NODE_IS(node, TYPE) (node->getType() == ExpressionType::TYPE)
+#define CAST_NODE_IF_TYPE(node, TYPE) (NODE_IS(node, TYPE) ? NODE_AS_PTR(node, TYPE) : nullptr);
+
 struct Expression {
     virtual std::string toString() const { return "not implemented"; }
     virtual bool isStatement() const { return false; }

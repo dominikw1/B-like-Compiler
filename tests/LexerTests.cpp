@@ -12,3 +12,9 @@ TEST(LexerTests, LexerRecognisesEquals) {
     ASSERT_TRUE(correct == scanned.at(0));
 }
 
+TEST(LexerTests, LexerRecognisesElseKW) {
+    auto scanned = scan("else");
+    Token correct{"else", TokenType::Else};
+    ASSERT_TRUE(correct == scanned.at(0));
+}
+
