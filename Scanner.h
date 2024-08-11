@@ -83,7 +83,6 @@ std::string_view incrementCurr(auto& currIt, std::size_t len) {
 std::optional<Token> lexNextToken(auto& curr, auto end) {
     if (curr == end)
         return {};
-    std::cout << "Lexing " << *curr << std::endl;
     if (isNumber(*curr)) {
         return Token{parseNumber(curr, end), TokenType::Number};
     }
@@ -162,7 +161,6 @@ std::optional<Token> lexNextToken(auto& curr, auto end) {
     }
 
     return Token{"", TokenType::ERROR};
-    // now there are not many options left..
 }
 
 auto scan(std::string_view program) {

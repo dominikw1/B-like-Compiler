@@ -51,6 +51,12 @@ inline std::string_view tokenTypeToString(const TokenType type) {
         return "ERROR";
     case TokenType::Plus:
         return "Plus";
+    case TokenType::Star:
+        return "Star";
+    case TokenType::Slash:
+        return "Slash";
+    case TokenType::Minus:
+        return "Minus";
     case TokenType::Semicolon:
         return "Semicolon";
     case TokenType::Left_Brace:
@@ -59,6 +65,8 @@ inline std::string_view tokenTypeToString(const TokenType type) {
         return "Right_Brace";
     case TokenType::Identifier:
         return "identifier";
+    case TokenType::Number:
+        return "Number";
     default:
         return "unimplemented";
     };

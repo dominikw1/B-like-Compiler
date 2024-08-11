@@ -24,9 +24,10 @@ class Parser {
 
   public:
     std::unique_ptr<Expression> parseExpression();
+    std::unique_ptr<Expression> parseStatement();
     std::unique_ptr<Expression> parseExprWithPrecedence(Precedence prec);
-    Token consumeNextToken();
-    Token lookaheadToken(std::uint32_t lookahead);
+    std::optional<Token> consumeNextToken();
+    std::optional<Token> lookaheadToken(std::uint32_t lookahead);
     void consumeTokenOfType(TokenType type);
     Precedence getPrecedenceOfNext();
     Parser(std::span<const Token> tokens);

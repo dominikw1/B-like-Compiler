@@ -4,11 +4,16 @@
 #include <span>
 
 int main() {
-    auto lexed{scan("1+3\n;\nakfak\nhihi\n")};
-    Parser parser{lexed};
-    AST ast{parser.parse()};
+    try {
+        auto lexed{scan("1+3\n;5*2+2+5/4;\nakfak;\nhihi;\nfoo+bar;FO+bar;;")};
+        for (auto& l : lexed) {
+            std::cout << l.lexeme << " " << std::endl;
+        }
+        Parser parser{lexed};
 
-    // for (const auto l : lexed) {
-    //     std::cout << tokenTypeToString(l.type) << " " << l.lexeme << "\n";
-    // }
+        AST ast{parser.parse()};
+
+    } catch (std::exception& e) {
+        std::cout << "exception " << e.what() << std::endl;
+    }
 }
