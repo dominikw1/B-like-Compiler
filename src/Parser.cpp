@@ -33,12 +33,12 @@ std::optional<Token> Parser::consumeNextToken() {
         return {};
     auto val = tokens.front();
     tokens = tokens.subspan(1);
-    std::cout<<"Consumed "<<val.toString()<<std::endl;
+    std::cout << "Consumed " << val.toString() << std::endl;
     return val;
 }
 
 std::optional<Token> Parser::lookaheadToken(std::uint32_t lookahead) {
-    if (tokens.size() < lookahead)
+    if (tokens.size() <= lookahead)
         return {};
     return tokens[lookahead];
 }
@@ -104,8 +104,9 @@ static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedenc
 
 [[nodiscard]]
 static Node parseScope(Parser& parser, Token consumed) {
-    auto ret = std::make_unique<Scope>(parser.parseExpression());
+    auto ret = std::make_unique<Scope>(parser.parseStatement());
     parser.consumeTokenOfType(TokenType::Right_Brace);
+    std::cout<<"parsed scope"<<std::endl;
     return ret;
 }
 

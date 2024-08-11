@@ -11,5 +11,5 @@ auto parseProgram(std::string_view program) {
 TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
     auto program = "if(a==b){a = 5;}";
     auto ast = parseProgram(program);
-    
+    ASSERT_EQ(ast.getTopLevel().at(0)->getType(), ExpressionType::If);
 }

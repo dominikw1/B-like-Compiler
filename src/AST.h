@@ -31,6 +31,7 @@ class AST {
 
   public:
     AST(std::vector<Node> toplevel) : toplevel{std::move(toplevel)} {}
+    const std::vector<Node>& getTopLevel() const { return toplevel; };
 };
 
 struct Value : Expression {
@@ -96,14 +97,14 @@ struct Assignment : Expression {
     std::string toString() const override {
         return std::format("Assignment: \n\t{} = {}", left->toString(), right->toString());
     }
-       constexpr ExpressionType getType() const override { return ExpressionType::Assignment; }
+    constexpr ExpressionType getType() const override { return ExpressionType::Assignment; }
 };
 
 struct Scope : Statement {
     Node scoped;
     Scope(Node scoped) : scoped{std::move(scoped)} {}
     std::string toString() const override { return "{" + scoped->toString() + "}"; }
-       constexpr ExpressionType getType() const override { return ExpressionType::Scope; }
+    constexpr ExpressionType getType() const override { return ExpressionType::Scope; }
 };
 
 struct If : Statement {
@@ -113,8 +114,8 @@ struct If : Statement {
     If(Node condition, Node thenBranch, Node elseBranch = nullptr)
         : condition{std::move(condition)}, thenBranch{std::move(thenBranch)}, elseBranch{std::move(elseBranch)} {}
     std::string toString() const override {
-        return std::format("If {} then {} else {}", condition->toString(), thenBranch->toString(),
-                           elseBranch->toString());
+        return std::format("If {} then {} {}", condition->toString(), thenBranch->toString(),
+                           std::format("{}", elseBranch ? elseBranch->toString() : "[no else]"));
     }
-       constexpr ExpressionType getType() const override { return ExpressionType::If; }
+    constexpr ExpressionType getType() const override { return ExpressionType::If; }
 };

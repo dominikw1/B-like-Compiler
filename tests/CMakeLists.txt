@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_definitions(-g -Wall -Wextra -pedantic)
 
-add_executable(tests LexerTests.cpp)
+add_executable(tests LexerTests.cpp ParserTests.cpp)
 target_link_libraries(tests -lubsan)
 
 target_link_libraries(tests gtest_main gtest Parser)
