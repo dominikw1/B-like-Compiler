@@ -12,7 +12,7 @@ enum class TokenType {
     Left_Brace,
     Right_Brace,
     Comma,
-    Dot,
+   // Dot,
     Slash,
     Star,
     Exclamation_Mark,

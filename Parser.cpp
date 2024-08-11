@@ -21,8 +21,8 @@ enum Precedence : unsigned int {
 };
 
 typedef struct {
-    std::unique_ptr<Expression> (*prefix)(Parser&, Token);
-    std::unique_ptr<Expression> (*infix)(Parser&, std::unique_ptr<Expression>, Token, Precedence);
+    Node (*prefix)(Parser&, Token);
+    Node (*infix)(Parser&, Node, Token, Precedence);
     Precedence infixPrecedence;
 } TokenParsingInfo;
 
@@ -33,7 +33,7 @@ std::optional<Token> Parser::consumeNextToken() {
         return {};
     auto val = tokens.front();
     tokens = tokens.subspan(1);
-
+    std::cout<<"Consumed "<<val.toString()<<std::endl;
     return val;
 }
 
@@ -53,47 +53,88 @@ void Parser::consumeTokenOfType(TokenType type) {
     }
 }
 
+bool Parser::isNextTokenOfType(TokenType type) {
+    if (auto nextToken = lookaheadToken(0)) {
+        return nextToken->type == type;
+    }
+    return false;
+}
+
 [[nodiscard]]
-static std::unique_ptr<Expression> parseValue(Parser& parser, Token consumed) {
+static Node parseValue(Parser& parser, Token consumed) {
     return std::make_unique<Value>(std::stoll(std::string(consumed.lexeme))); // from_chars maybe
 }
 
 [[nodiscard]]
-static std::unique_ptr<Expression> parseParenGroup(Parser& parser, Token consumed) {
+static Node parseParenGroup(Parser& parser, Token consumed) {
     auto expr = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
     return expr;
 }
 
 [[nodiscard]]
-static std::unique_ptr<Expression> parseIdentifier(Parser& parser, Token consumed) {
+static Node parseIdentifier(Parser& parser, Token consumed) {
     return std::make_unique<Name>(consumed.lexeme);
 }
 
 [[nodiscard]]
-static std::unique_ptr<Expression> parsePrefixOperator(Parser& parser, Token consumed) {
+static Node parsePrefixOperator(Parser& parser, Token consumed) {
     return std::make_unique<PrefixOperator>(consumed.type, parser.parseExprWithPrecedence(PREC_UNARY_OP));
 }
 
 [[nodiscard]]
-static std::unique_ptr<Expression> parseBinaryOperator(Parser& parser, std::unique_ptr<Expression> prev, Token consumed,
-                                                       Precedence currPrec) {
+static Node parseBinaryOperator(Parser& parser, Node prev, Token consumed, Precedence currPrec) {
     return std::make_unique<BinaryOperator>(consumed.type, std::move(prev), parser.parseExprWithPrecedence(currPrec));
 }
 
 [[nodiscard]]
-static std::unique_ptr<Expression> parsePostfixOperator(Parser& parser, std::unique_ptr<Expression> prev,
-                                                        Token consumed, Precedence _) {
+static Node parsePostfixOperator(Parser& parser, Node prev, Token consumed, Precedence _) {
     return std::make_unique<PostfixOperator>(consumed.type, std::move(prev));
 }
 
 [[nodiscard]]
-static std::unique_ptr<Expression> parseEmptyStatement(Parser& parser, Token consumed) {
-    return std::make_unique<Statement>(nullptr);
+static Node parseEmptyStatement(Parser& parser, Token consumed) {
+    return std::make_unique<ExpressionStatement>(nullptr);
 }
 
 [[nodiscard]]
-std::unique_ptr<Expression> Parser::parseExprWithPrecedence(Precedence prec) {
+static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence _) {
+    return std::make_unique<Assignment>(std::move(prev), parser.parseExpression());
+}
+
+[[nodiscard]]
+static Node parseScope(Parser& parser, Token consumed) {
+    auto ret = std::make_unique<Scope>(parser.parseExpression());
+    parser.consumeTokenOfType(TokenType::Right_Brace);
+    return ret;
+}
+
+[[nodiscard]]
+static Node parseIf(Parser& parser, Token consumed) {
+    std::cout << "parsing if" << std::endl;
+    parser.consumeTokenOfType(TokenType::Left_Parenthesis);
+    auto cond = parser.parseExpression();
+    parser.consumeTokenOfType(TokenType::Right_Parenthesis);
+    auto thenBranch = [&parser]() -> Node {
+        if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
+            return parseScope(parser, *parser.consumeNextToken());
+        }
+        return std::make_unique<Scope>(parser.parseStatement());
+    }();
+    auto elseBranch = [&parser]() -> Node {
+        if (parser.isNextTokenOfType(TokenType::Else)) {
+            if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
+                return parseScope(parser, *parser.consumeNextToken());
+            }
+            return std::make_unique<Scope>(parser.parseStatement());
+        }
+        return nullptr;
+    }();
+    return std::make_unique<If>(std::move(cond), std::move(thenBranch), std::move(elseBranch));
+}
+
+[[nodiscard]]
+Node Parser::parseExprWithPrecedence(Precedence prec) {
     auto maybeToken = consumeNextToken();
     if (!maybeToken) {
         return nullptr;
@@ -120,19 +161,19 @@ std::unique_ptr<Expression> Parser::parseExprWithPrecedence(Precedence prec) {
 }
 
 [[nodiscard]]
-std::unique_ptr<Expression> Parser::parseExpression() {
+Node Parser::parseExpression() {
     return parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
 };
 
 [[nodiscard]]
-std::unique_ptr<Expression> Parser::parseStatement() {
+Node Parser::parseStatement() {
     auto expr = parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
     if (!expr)
         return nullptr;
     if (expr->isStatement())
         return expr;
     consumeTokenOfType(TokenType::Semicolon);
-    return std::make_unique<Statement>(std::move(expr));
+    return std::make_unique<ExpressionStatement>(std::move(expr));
 }
 
 [[nodiscard]]
@@ -158,20 +199,40 @@ void registerAllSubParsers() {
     subParsers[TokenType::Slash] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
     subParsers[TokenType::Mod] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
 
-    subParsers[TokenType::Tilde] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
     subParsers[TokenType::Exclamation_Mark] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
+
+    subParsers[TokenType::Tilde] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
     subParsers[TokenType::And_Bit] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_AND};
-    subParsers[TokenType::And_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_AND};
     subParsers[TokenType::Or_Bit] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_OR};
+    subParsers[TokenType::Xor] = {nullptr, &parseBinaryOperator, PREC_LOGIC_BIT_XOR};
+
+    subParsers[TokenType::And_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_AND};
     subParsers[TokenType::Or_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_OR};
 
     subParsers[TokenType::Left_Parenthesis] = {&parseParenGroup, nullptr, Precedence::PREC_NONE};
+    subParsers[TokenType::Right_Parenthesis] = {nullptr, nullptr, Precedence::PREC_NONE};
+    subParsers[TokenType::Left_Brace] = {&parseScope, nullptr, PREC_NONE};
+    subParsers[TokenType::Right_Brace] = {nullptr, nullptr, PREC_NONE};
+
     subParsers[TokenType::Semicolon] = {&parseEmptyStatement, nullptr, Precedence::PREC_NONE};
+    subParsers[TokenType::Assignment] = {nullptr, &parseAssignment, PREC_ASSIGNMENT};
+    // Comparisons
+    subParsers[TokenType::Equals] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+    subParsers[TokenType::Uneqal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+    subParsers[TokenType::Larger] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+    subParsers[TokenType::Larger_Equal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+    subParsers[TokenType::Smaller] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+    subParsers[TokenType::Smaller_Equal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+
+    // Keywords
+    subParsers[TokenType::If] = {&parseIf, nullptr, PREC_NONE};
+    subParsers[TokenType::Else] = {nullptr, nullptr, PREC_NONE};
 }
 
 AST Parser::parse() {
+    std::cout << "Starting parsing..." << std::endl;
     registerAllSubParsers();
-    std::vector<std::unique_ptr<Expression>> toplevel;
+    std::vector<Node> toplevel;
     for (auto statement = parseStatement(); statement; statement = parseStatement()) {
         std::cout << statement->toString() << std::endl;
         toplevel.push_back(std::move(statement));

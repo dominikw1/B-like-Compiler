@@ -11,11 +11,13 @@ struct Expression {
     virtual bool isStatement() { return false; }
 };
 
+using Node = std::unique_ptr<Expression>;
+
 class AST {
-    std::vector<std::unique_ptr<Expression>> toplevel;
+    std::vector<Node> toplevel;
 
   public:
-    AST(std::vector<std::unique_ptr<Expression>> toplevel) : toplevel{std::move(toplevel)} {}
+    AST(std::vector<Node> toplevel) : toplevel{std::move(toplevel)} {}
 };
 
 struct Value : Expression {
@@ -32,15 +34,15 @@ struct Name : Expression {
 
 struct PrefixOperator : Expression {
     TokenType type;
-    std::unique_ptr<Expression> operand;
-    PrefixOperator(TokenType type, std::unique_ptr<Expression> operand) : type{type}, operand{std::move(operand)} {}
+    Node operand;
+    PrefixOperator(TokenType type, Node operand) : type{type}, operand{std::move(operand)} {}
 };
 
 struct BinaryOperator : Expression {
     TokenType type;
-    std::unique_ptr<Expression> operand1;
-    std::unique_ptr<Expression> operand2;
-    BinaryOperator(TokenType type, std::unique_ptr<Expression> operand1, std::unique_ptr<Expression> operand2)
+    Node operand1;
+    Node operand2;
+    BinaryOperator(TokenType type, Node operand1, Node operand2)
         : type{type}, operand1{std::move(operand1)}, operand2{std::move(operand2)} {}
     std::string toString() override {
         return std::format("BinOp {} - \n\t({}) \n\t({})", tokenTypeToString(type), operand1->toString(),
@@ -50,17 +52,47 @@ struct BinaryOperator : Expression {
 
 struct PostfixOperator : Expression {
     TokenType type;
-    std::unique_ptr<Expression> operand;
-    PostfixOperator(TokenType type, std::unique_ptr<Expression> operand) : type{type}, operand{std::move(operand)} {}
+    Node operand;
+    PostfixOperator(TokenType type, Node operand) : type{type}, operand{std::move(operand)} {}
 };
 
 struct Statement : Expression {
-    std::unique_ptr<Expression> expression;
-    Statement(std::unique_ptr<Expression> expr) : expression{std::move(expr)} {}
+    bool isStatement() override { return true; }
+};
+
+struct ExpressionStatement : Statement {
+    Node expression;
+    ExpressionStatement(Node expr) : expression{std::move(expr)} {}
     std::string toString() override {
         if (expression)
             return std::format("Statement: \n\t{}", expression->toString());
         return "Statement: Empty";
     }
-    bool isStatement() override { return true; }
+};
+
+struct Assignment : Expression {
+    Node left;
+    Node right;
+    Assignment(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {}
+    std::string toString() override {
+        return std::format("Assignment: \n\t{} = {}", left->toString(), right->toString());
+    }
+};
+
+struct Scope : Statement {
+    Node scoped;
+    Scope(Node scoped) : scoped{std::move(scoped)} {}
+    std::string toString() override { return "{" + scoped->toString() + "}"; }
+};
+
+struct If : Statement {
+    Node condition;
+    Node thenBranch;
+    Node elseBranch;
+    If(Node condition, Node thenBranch, Node elseBranch = nullptr)
+        : condition{std::move(condition)}, thenBranch{std::move(thenBranch)}, elseBranch{std::move(elseBranch)} {}
+    std::string toString() override {
+        return std::format("If {} then {} else {}", condition->toString(), thenBranch->toString(),
+                           elseBranch->toString());
+    }
 };

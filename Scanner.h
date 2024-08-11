@@ -98,8 +98,8 @@ std::optional<Token> lexNextToken(auto& curr, auto end) {
         return Token{incrementCurr(curr, 1), TokenType::Minus};
     case ',':
         return Token{incrementCurr(curr, 1), TokenType::Comma};
-    case '.':
-        return Token{incrementCurr(curr, 1), TokenType::Dot};
+        //  case '.':
+        //    return Token{incrementCurr(curr, 1), TokenType::Dot};
     case '/':
         return Token{incrementCurr(curr, 1), TokenType::Slash};
     case '*':
