@@ -45,12 +45,13 @@ std::optional<Token> Parser::lookaheadToken(std::uint32_t lookahead) {
 
 Parser::Parser(std::span<const Token> tokens) : tokens{tokens} {}
 
-void Parser::consumeTokenOfType(TokenType type) {
+Token Parser::consumeTokenOfType(TokenType type) {
     auto nextToken = consumeNextToken();
     if (!nextToken || nextToken->type != type) {
         throw std::runtime_error("Expected token of type " + std::string(tokenTypeToString(type)) + ", found token " +
                                  nextToken->toString());
     }
+    return *nextToken;
 }
 
 bool Parser::isNextTokenOfType(TokenType type) {
@@ -67,6 +68,11 @@ static Node parseValue(Parser& parser, Token consumed) {
 
 [[nodiscard]]
 static Node parseParenGroup(Parser& parser, Token consumed) {
+    auto lookahead = parser.lookaheadToken(0);
+    if (lookahead && lookahead->type == TokenType::Right_Parenthesis) {
+        parser.consumeTokenOfType(TokenType::Right_Parenthesis);
+        return nullptr; // empty paren group - valid expr
+    }
     auto expr = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
     return expr;
@@ -170,7 +176,19 @@ Node Parser::parseExpression() {
 };
 
 [[nodiscard]]
+std::vector<Node> Parser::parseStatements() {
+    std::vector<Node> statements;
+    for (auto statement = parseStatement(); statement; statement = parseStatement()) {
+        statements.push_back(std::move(statement));
+    }
+    return statements;
+}
+
+[[nodiscard]]
 Node Parser::parseStatement() {
+    if (auto lookahead = lookaheadToken(0); lookahead && lookahead->type == TokenType::Right_Brace) {
+        return nullptr; // end of scope
+    }
     auto expr = parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
     if (!expr)
         return nullptr;
@@ -178,6 +196,28 @@ Node Parser::parseStatement() {
         return expr;
     consumeTokenOfType(TokenType::Semicolon);
     return std::make_unique<ExpressionStatement>(std::move(expr));
+}
+
+[[nodiscard]]
+Node Parser::parseFunction() {
+    if (tokens.size() == 0)
+        return nullptr;
+    auto name = parseIdentifier(*this, consumeTokenOfType(TokenType::Identifier));
+    auto argList = parseParenGroup(*this, consumeTokenOfType(TokenType::Left_Parenthesis));
+    consumeTokenOfType(TokenType::Left_Brace);
+    auto statements = parseStatements();
+    consumeTokenOfType(TokenType::Right_Brace);
+    return std::make_unique<Function>(std::move(name), std::move(argList), std::move(statements));
+}
+
+[[nodiscard]]
+std::vector<Node> Parser::parseFunctions() {
+    std::vector<Node> functions;
+    for (auto function = parseFunction(); function; function = parseFunction()) {
+        // std::cout << function->toString() << std::endl;
+        functions.push_back(std::move(function));
+    }
+    return functions;
 }
 
 [[nodiscard]]
@@ -236,10 +276,9 @@ void registerAllSubParsers() {
 AST Parser::parse() {
     std::cout << "Starting parsing..." << std::endl;
     registerAllSubParsers();
-    std::vector<Node> toplevel;
-    for (auto statement = parseStatement(); statement; statement = parseStatement()) {
-        std::cout << statement->toString() << std::endl;
-        toplevel.push_back(std::move(statement));
+    auto funcs = parseFunctions();
+    if (tokens.size() != 0) {
+        throw std::runtime_error("Malformed program");
     }
-    return AST{std::move(toplevel)};
+    return AST{std::move(funcs)};
 }

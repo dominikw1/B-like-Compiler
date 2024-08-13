@@ -2,17 +2,24 @@
 #include "../src/Scanner.h"
 #include <gtest/gtest.h>
 
-auto parseProgram(std::string_view program) {
+using namespace std::literals;
+
+#define WRAPPED_IN_MAIN(program) ("main(){" program "}")
+
+AST parseProgram(std::string_view program) {
     auto lexed = scan(program);
+    for (auto& l : lexed)
+        std::cout << l.toString() << std::endl;
     Parser p{lexed};
     return p.parse();
 }
 
 TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
-    auto program = "if(a==b){a = 5;}";
+    auto program = WRAPPED_IN_MAIN("if(a==b){a = 5;}");
     auto ast = parseProgram(program);
-    ASSERT_EQ(ast.getTopLevel().at(0)->getType(), ExpressionType::If);
-    auto& ifExpr{NODE_AS_REF(ast.getTopLevel().at(0), If)};
+    auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
+    ASSERT_EQ(statements.at(0)->getType(), ExpressionType::If);
+    auto& ifExpr{NODE_AS_REF(statements.at(0), If)};
     ASSERT_EQ(ifExpr.condition->getType(), ExpressionType::BinaryOperator);
     auto& equalsExpr{NODE_AS_REF(ifExpr.condition, BinaryOperator)};
     auto& aInCond = NODE_AS_REF(equalsExpr.operand1, Name);
@@ -31,9 +38,10 @@ TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
     ASSERT_TRUE(assignment5 && assignment5->val == 5);
 }
 TEST(ParserTests, ParserParsesIfWithElseCorrectly) {
-    auto program = "if(a==b){a = 5;}else a = 6;";
+    auto program = WRAPPED_IN_MAIN("if(a==b){a = 5;}else a = 6;");
     auto ast = parseProgram(program);
-    auto ifExpr = CAST_NODE_IF_TYPE(ast.getTopLevel().at(0), If);
+    auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
+    auto ifExpr = CAST_NODE_IF_TYPE(statements.at(0), If);
     ASSERT_TRUE(ifExpr && ifExpr->condition && ifExpr->thenBranch && ifExpr->elseBranch);
     auto elseExpr = CAST_NODE_IF_TYPE(ifExpr->elseBranch, Scope);
     ASSERT_TRUE(elseExpr && elseExpr->scoped);

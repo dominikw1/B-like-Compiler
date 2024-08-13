@@ -59,6 +59,10 @@ inline std::string_view tokenTypeToString(const TokenType type) {
         return "Minus";
     case TokenType::Semicolon:
         return "Semicolon";
+    case TokenType::Left_Parenthesis:
+        return "Left_parenthesis";
+    case TokenType::Right_Parenthesis:
+        return "Right_parenthesis";
     case TokenType::Left_Brace:
         return "Left_Brace";
     case TokenType::Right_Brace:

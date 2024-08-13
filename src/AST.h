@@ -1,5 +1,6 @@
 #pragma once
 #include "Token.h"
+#include <cassert>
 #include <cstdint>
 #include <format>
 #include <memory>
@@ -15,13 +16,14 @@ enum class ExpressionType {
     ExpressionStatement,
     Assignment,
     Scope,
-    If
+    If,
+    Function
 };
 
 #define NODE_AS_PTR(node, TYPE) (static_cast<const TYPE*>(node.get()))
 #define NODE_AS_REF(node, TYPE) (*NODE_AS_PTR(node, TYPE))
 #define NODE_IS(node, TYPE) (node->getType() == ExpressionType::TYPE)
-#define CAST_NODE_IF_TYPE(node, TYPE) (NODE_IS(node, TYPE) ? NODE_AS_PTR(node, TYPE) : nullptr);
+#define CAST_NODE_IF_TYPE(node, TYPE) (NODE_IS(node, TYPE) ? NODE_AS_PTR(node, TYPE) : (TYPE*)nullptr);
 
 struct Expression {
     virtual std::string toString() const { return "not implemented"; }
@@ -37,6 +39,7 @@ class AST {
   public:
     AST(std::vector<Node> toplevel) : toplevel{std::move(toplevel)} {}
     const std::vector<Node>& getTopLevel() const { return toplevel; };
+    Node take(size_t index) { return std::move(toplevel[index]); };
 };
 
 struct Value : Expression {
@@ -121,6 +124,26 @@ struct If : Statement {
     std::string toString() const override {
         return std::format("If {} then {} {}", condition->toString(), thenBranch->toString(),
                            std::format("{}", elseBranch ? elseBranch->toString() : "[no else]"));
+    }
+    constexpr ExpressionType getType() const override { return ExpressionType::If; }
+};
+
+struct Function : Statement {
+    Node name;
+    Node argList;
+    std::vector<Node> body;
+
+    Function(Node name, Node argList, std::vector<Node> body)
+        : name{std::move(name)}, argList{std::move(argList)}, body{std::move(body)} {}
+
+    std::string toString() const override {
+        auto header = std::format("Function {} ({})\n", name->toString(), argList ? argList->toString() : "");
+        for (auto& s : body) {
+            assert(s);
+            header += s->toString() + "\n";
+        }
+        header += "\n";
+        return header;
     }
     constexpr ExpressionType getType() const override { return ExpressionType::If; }
 };

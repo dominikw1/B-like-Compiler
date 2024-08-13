@@ -25,11 +25,14 @@ class Parser {
   public:
     Node parseExpression();
     Node parseStatement();
+    std::vector<Node> parseStatements();
+    Node parseFunction();
+    std::vector<Node> parseFunctions();
     Node parseExprWithPrecedence(Precedence prec);
     std::optional<Token> consumeNextToken();
     std::optional<Token> lookaheadToken(std::uint32_t lookahead);
     bool isNextTokenOfType(TokenType type);
-    void consumeTokenOfType(TokenType type);
+    Token consumeTokenOfType(TokenType type);
     Precedence getPrecedenceOfNext();
     Parser(std::span<const Token> tokens);
     AST parse();
