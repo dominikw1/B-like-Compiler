@@ -71,6 +71,8 @@ inline std::string_view tokenTypeToString(const TokenType type) {
         return "identifier";
     case TokenType::Number:
         return "Number";
+    case TokenType::Assignment:
+        return "Assignment";
     default:
         return "unimplemented";
     };

@@ -79,6 +79,11 @@ static Node parseParenGroup(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
+static Node parseCommaList(Parser& parser, Node prev, Token _token, Precedence _prec) {
+    return std::make_unique<CommaList>(std::move(prev), parser.parseExpression());
+}
+
+[[nodiscard]]
 static Node parseIdentifier(Parser& parser, Token consumed) {
     return std::make_unique<Name>(consumed.lexeme);
 }
@@ -104,21 +109,39 @@ static Node parseEmptyStatement(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
+static Node parseAssignment(Parser& parser, Token consumed) {
+    // we come here through register / auto
+    std::cout << "In correct function\n";
+    auto left = parser.parseExprWithPrecedence(
+        Precedence::PREC_LOGIC_OR); // to make sure we are not accidentally picking up the whole assignemt
+    parser.consumeTokenOfType(TokenType::Assignment);
+    auto right = parser.parseExpression();
+    parser.consumeTokenOfType(TokenType::Semicolon);
+    return std::make_unique<Assignment>(consumed, std::move(left), std::move(right));
+}
+
+[[nodiscard]]
 static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence _) {
-    return std::make_unique<Assignment>(std::move(prev), parser.parseExpression());
+    auto right = parser.parseExpression();
+    parser.consumeTokenOfType(TokenType::Semicolon);
+    return std::make_unique<Assignment>(std::move(prev), std::move(right));
 }
 
 [[nodiscard]]
 static Node parseScope(Parser& parser, Token consumed) {
     auto ret = std::make_unique<Scope>(parser.parseStatement());
     parser.consumeTokenOfType(TokenType::Right_Brace);
-    std::cout << "parsed scope" << std::endl;
     return ret;
 }
 
 [[nodiscard]]
+static Node parseFunctionCall(Parser& parser, Node prev, Token consumed, Precedence _prec) {
+    auto args = parseParenGroup(parser, std::move(consumed));
+    return std::make_unique<FunctionCall>(std::move(prev), args ? std::optional{std::move(args)} : std::nullopt);
+}
+
+[[nodiscard]]
 static Node parseIf(Parser& parser, Token consumed) {
-    std::cout << "parsing if" << std::endl;
     parser.consumeTokenOfType(TokenType::Left_Parenthesis);
     auto cond = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
@@ -128,19 +151,42 @@ static Node parseIf(Parser& parser, Token consumed) {
         }
         return std::make_unique<Scope>(parser.parseStatement());
     }();
-    std::cout << "Parsed then branch\n";
     auto elseBranch = [&parser]() -> Node {
         if (parser.isNextTokenOfType(TokenType::Else)) {
             parser.consumeTokenOfType(TokenType::Else);
             if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
                 return parseScope(parser, *parser.consumeNextToken());
             }
-            std::cout << "Detected no explicit scope\n";
             return std::make_unique<Scope>(parser.parseStatement());
         }
         return nullptr;
     }();
     return std::make_unique<If>(std::move(cond), std::move(thenBranch), std::move(elseBranch));
+}
+
+[[nodiscard]]
+static Node parseWhile(Parser& parser, Token consumed) {
+    parser.consumeTokenOfType(TokenType::Left_Parenthesis);
+    auto cond = parser.parseExpression();
+    parser.consumeTokenOfType(TokenType::Right_Parenthesis);
+    auto body = [&parser]() -> Node {
+        if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
+            return parseScope(parser, *parser.consumeNextToken());
+        }
+        return std::make_unique<Scope>(parser.parseStatement());
+    }();
+    return std::make_unique<While>(std::move(cond), std::move(body));
+}
+
+[[nodiscard]]
+static Node parseReturn(Parser& parser, Token consumed) {
+    if (auto next = parser.lookaheadToken(0); next && next->type == TokenType::Semicolon) {
+        parser.consumeTokenOfType(TokenType::Semicolon);
+        return std::make_unique<Return>();
+    }
+    auto what = parser.parseExpression();
+    parser.consumeTokenOfType(TokenType::Semicolon);
+    return std::make_unique<Return>(std::move(what));
 }
 
 [[nodiscard]]
@@ -207,7 +253,8 @@ Node Parser::parseFunction() {
     consumeTokenOfType(TokenType::Left_Brace);
     auto statements = parseStatements();
     consumeTokenOfType(TokenType::Right_Brace);
-    return std::make_unique<Function>(std::move(name), std::move(argList), std::move(statements));
+    return std::make_unique<Function>(std::move(name), argList ? std::optional{std::move(argList)} : std::nullopt,
+                                      std::move(statements));
 }
 
 [[nodiscard]]
@@ -253,7 +300,7 @@ void registerAllSubParsers() {
     subParsers[TokenType::And_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_AND};
     subParsers[TokenType::Or_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_OR};
 
-    subParsers[TokenType::Left_Parenthesis] = {&parseParenGroup, nullptr, Precedence::PREC_NONE};
+    subParsers[TokenType::Left_Parenthesis] = {&parseParenGroup, &parseFunctionCall, Precedence::PREC_ARRAY};
     subParsers[TokenType::Right_Parenthesis] = {nullptr, nullptr, Precedence::PREC_NONE};
     subParsers[TokenType::Left_Brace] = {&parseScope, nullptr, PREC_NONE};
     subParsers[TokenType::Right_Brace] = {nullptr, nullptr, PREC_NONE};
@@ -271,6 +318,11 @@ void registerAllSubParsers() {
     // Keywords
     subParsers[TokenType::If] = {&parseIf, nullptr, PREC_NONE};
     subParsers[TokenType::Else] = {nullptr, nullptr, PREC_NONE};
+    subParsers[TokenType::Register] = {&parseAssignment, nullptr, PREC_NONE};
+    subParsers[TokenType::Auto] = {&parseAssignment, nullptr, PREC_NONE};
+    subParsers[TokenType::While] = {&parseWhile, nullptr, PREC_NONE};
+    subParsers[TokenType::Return] = {&parseReturn, nullptr, PREC_NONE};
+    subParsers[TokenType::Comma] = {nullptr, &parseCommaList, PREC_ASSIGNMENT};
 }
 
 AST Parser::parse() {

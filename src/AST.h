@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <format>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,7 +18,11 @@ enum class ExpressionType {
     Assignment,
     Scope,
     If,
-    Function
+    Function,
+    While,
+    Return,
+    FunctionCall,
+    CommaList,
 };
 
 #define NODE_AS_PTR(node, TYPE) (static_cast<const TYPE*>(node.get()))
@@ -98,12 +103,18 @@ struct ExpressionStatement : Statement {
     constexpr ExpressionType getType() const override { return ExpressionType::ExpressionStatement; }
 };
 
-struct Assignment : Expression {
+struct Assignment : Statement {
+    std::optional<Token> modifyer{};
     Node left;
     Node right;
     Assignment(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {}
+    Assignment(Token modifyer, Node left, Node right)
+        : modifyer{std::move(modifyer)}, left{std::move(left)}, right{std::move(right)} {
+        std::cout << "Assignemnt" << std::endl;
+    }
     std::string toString() const override {
-        return std::format("Assignment: \n\t{} = {}", left->toString(), right->toString());
+        return std::format("Assignment: \n\t{} {} = {}", modifyer ? modifyer->lexeme : "", left->toString(),
+                           right->toString());
     }
     constexpr ExpressionType getType() const override { return ExpressionType::Assignment; }
 };
@@ -130,14 +141,14 @@ struct If : Statement {
 
 struct Function : Statement {
     Node name;
-    Node argList;
+    std::optional<Node> argList{};
     std::vector<Node> body;
 
-    Function(Node name, Node argList, std::vector<Node> body)
+    Function(Node name, std::optional<Node> argList, std::vector<Node> body)
         : name{std::move(name)}, argList{std::move(argList)}, body{std::move(body)} {}
 
     std::string toString() const override {
-        auto header = std::format("Function {} ({})\n", name->toString(), argList ? argList->toString() : "");
+        auto header = std::format("Function {} ({})\n", name->toString(), argList ? argList.value()->toString() : "");
         for (auto& s : body) {
             assert(s);
             header += s->toString() + "\n";
@@ -146,4 +157,46 @@ struct Function : Statement {
         return header;
     }
     constexpr ExpressionType getType() const override { return ExpressionType::If; }
+};
+
+struct While : Statement {
+    Node condition;
+    Node body;
+
+    While(Node cond, Node body) : condition{std::move(cond)}, body{std::move(body)} {}
+
+    std::string toString() const override {
+        return std::format("while ({})  {}  \n", condition->toString(), body->toString()) + "}\n";
+    }
+    constexpr ExpressionType getType() const override { return ExpressionType::While; }
+};
+
+struct Return : Statement {
+    std::optional<Node> what{};
+
+    Return() {}
+    Return(Node what) : what{std::move(what)} {};
+
+    std::string toString() const override { return std::format("return {}", what ? (*what)->toString() : ""); }
+    constexpr ExpressionType getType() const override { return ExpressionType::Return; }
+};
+
+struct FunctionCall : Expression {
+    Node name;
+    std::optional<Node> args;
+
+    FunctionCall(Node name, std::optional<Node> args) : name{std::move(name)}, args{std::move(args)} {}
+    std::string toString() const override {
+        return std::format("calling function {} with args ({})", name->toString(), args ? args.value()->toString() : "");
+    }
+    constexpr ExpressionType getType() const override { return ExpressionType::FunctionCall; }
+};
+
+struct CommaList : Expression {
+    Node left;
+    Node right; // either Comma list or type
+
+    CommaList(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {}
+    std::string toString() const override { return std::format("{}, {}", left->toString(), right->toString()); }
+    constexpr ExpressionType getType() const override { return ExpressionType::CommaList; }
 };
