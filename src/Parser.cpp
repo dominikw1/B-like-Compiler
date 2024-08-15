@@ -79,8 +79,8 @@ static Node parseParenGroup(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseCommaList(Parser& parser, Node prev, Token _token, Precedence _prec) {
-    return std::make_unique<CommaList>(std::move(prev), parser.parseExpression());
+static Node parseCommaList(Parser& parser, Node prev, Token _token, Precedence prec) {
+    return std::make_unique<CommaList>(std::move(prev), parser.parseExprWithPrecedence(prec));
 }
 
 [[nodiscard]]
@@ -121,7 +121,8 @@ static Node parseAssignment(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence _) {
+static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence prec) {
+    std::cout << "in correct method" << std::endl;
     auto right = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Semicolon);
     return std::make_unique<Assignment>(std::move(prev), std::move(right));
@@ -129,7 +130,8 @@ static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedenc
 
 [[nodiscard]]
 static Node parseScope(Parser& parser, Token consumed) {
-    auto ret = std::make_unique<Scope>(parser.parseStatement());
+    std::cout << "Tryna parse scope " << std::endl;
+    auto ret = std::make_unique<Scope>(parser.parseStatements());
     parser.consumeTokenOfType(TokenType::Right_Brace);
     return ret;
 }
@@ -145,19 +147,15 @@ static Node parseIf(Parser& parser, Token consumed) {
     parser.consumeTokenOfType(TokenType::Left_Parenthesis);
     auto cond = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
-    auto thenBranch = [&parser]() -> Node {
-        if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
-            return parseScope(parser, *parser.consumeNextToken());
-        }
-        return std::make_unique<Scope>(parser.parseStatement());
-    }();
+    auto leftBrace = parser.consumeTokenOfType(TokenType::Left_Brace);
+    auto thenBranch = parseScope(parser, std::move(leftBrace));
+
     auto elseBranch = [&parser]() -> Node {
         if (parser.isNextTokenOfType(TokenType::Else)) {
             parser.consumeTokenOfType(TokenType::Else);
-            if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
-                return parseScope(parser, *parser.consumeNextToken());
-            }
-            return std::make_unique<Scope>(parser.parseStatement());
+            auto brace = parser.consumeTokenOfType(TokenType::Left_Brace);
+            auto ret = parseScope(parser, std::move(brace));
+            return ret;
         }
         return nullptr;
     }();
@@ -169,13 +167,15 @@ static Node parseWhile(Parser& parser, Token consumed) {
     parser.consumeTokenOfType(TokenType::Left_Parenthesis);
     auto cond = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
-    auto body = [&parser]() -> Node {
-        if (parser.isNextTokenOfType(TokenType::Left_Brace)) {
-            return parseScope(parser, *parser.consumeNextToken());
-        }
-        return std::make_unique<Scope>(parser.parseStatement());
-    }();
+    auto body = parseScope(parser, *parser.consumeNextToken());
     return std::make_unique<While>(std::move(cond), std::move(body));
+}
+
+[[nodiscard]]
+static Node parseArrayIndexing(Parser& parser, Node prev, Token _consumed, Precedence prec) {
+    auto index = parser.parseExpression(); // not using prec cause otherwise nothing will be found
+    parser.consumeTokenOfType(TokenType::Right_Bracket);
+    return std::make_unique<ArrayIndexing>(std::move(prev), std::move(index));
 }
 
 [[nodiscard]]
@@ -203,7 +203,7 @@ Node Parser::parseExprWithPrecedence(Precedence prec) {
         throw std::runtime_error("Error parsing token " + token.toString() + ". Expected an expression");
 
     auto parsedPrefix = prefixParser(*this, token);
-    // std::cout << "curr prec = " << prec << std::endl;
+    std::cout << "curr prec = " << prec << std::endl;
     while (prec <= getPrecedenceOfNext()) {
         maybeToken = consumeNextToken();
         if (!maybeToken) {
@@ -232,6 +232,7 @@ std::vector<Node> Parser::parseStatements() {
 
 [[nodiscard]]
 Node Parser::parseStatement() {
+    std::cout << "tryna parse statement" << std::endl;
     if (auto lookahead = lookaheadToken(0); lookahead && lookahead->type == TokenType::Right_Brace) {
         return nullptr; // end of scope
     }
@@ -273,7 +274,7 @@ Precedence Parser::getPrecedenceOfNext() {
     if (!nextToken) {
         return Precedence::PREC_NONE;
     }
-    // std::cout << "Taking a lookahead at " << nextToken->toString() << std::endl;
+    std::cout << "Taking a lookahead at " << nextToken->toString() << std::endl;
     if (auto parser = subParsers.at(nextToken->type); parser.infix != nullptr) {
         return parser.infixPrecedence;
     }
@@ -291,11 +292,14 @@ void registerAllSubParsers() {
     subParsers[TokenType::Mod] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
 
     subParsers[TokenType::Exclamation_Mark] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
+    subParsers[TokenType::Sizespec] = {nullptr, &parseBinaryOperator, PREC_ASSIGNMENT};
 
     subParsers[TokenType::Tilde] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
-    subParsers[TokenType::And_Bit] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_AND};
+    subParsers[TokenType::And_Bit] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_AND};
     subParsers[TokenType::Or_Bit] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_OR};
     subParsers[TokenType::Xor] = {nullptr, &parseBinaryOperator, PREC_LOGIC_BIT_XOR};
+    subParsers[TokenType::Bitshift_Left] = {nullptr, &parseBinaryOperator, PREC_BIT_SHIFT};
+    subParsers[TokenType::Bitshift_Right] = {nullptr, &parseBinaryOperator, PREC_BIT_SHIFT};
 
     subParsers[TokenType::And_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_AND};
     subParsers[TokenType::Or_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_OR};
@@ -304,6 +308,8 @@ void registerAllSubParsers() {
     subParsers[TokenType::Right_Parenthesis] = {nullptr, nullptr, Precedence::PREC_NONE};
     subParsers[TokenType::Left_Brace] = {&parseScope, nullptr, PREC_NONE};
     subParsers[TokenType::Right_Brace] = {nullptr, nullptr, PREC_NONE};
+    subParsers[TokenType::Left_Bracket] = {nullptr, &parseArrayIndexing, PREC_ARRAY};
+    subParsers[TokenType::Right_Bracket] = {nullptr, nullptr, PREC_NONE};
 
     subParsers[TokenType::Semicolon] = {&parseEmptyStatement, nullptr, Precedence::PREC_NONE};
     subParsers[TokenType::Assignment] = {nullptr, &parseAssignment, PREC_ASSIGNMENT};

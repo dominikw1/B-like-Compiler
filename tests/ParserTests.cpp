@@ -20,8 +20,6 @@ using namespace std::literals;
 
 AST parseProgram(std::string_view program) {
     auto lexed = scan(program);
-    for (auto& l : lexed)
-        std::cout << l.toString() << std::endl;
     Parser p{lexed};
     return p.parse();
 }
@@ -40,22 +38,22 @@ TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
     ASSERT_EQ(bInCond.literal, "b");
     ASSERT_TRUE(NODE_IS(ifExpr.thenBranch, Scope));
     auto& scope = NODE_AS_REF(ifExpr.thenBranch, Scope);
-    ASSERT_TRUE(NODE_IS(scope.scoped, Assignment));
-    auto& assignmentStatement = NODE_AS_REF(scope.scoped, Assignment);
+    ASSERT_TRUE(NODE_IS(scope.scoped.at(0), Assignment));
+    auto& assignmentStatement = NODE_AS_REF(scope.scoped.at(0), Assignment);
     auto assignmentA = CAST_NODE_IF_TYPE(assignmentStatement.left, Name);
     auto assignment5 = CAST_NODE_IF_TYPE(assignmentStatement.right, Value);
     ASSERT_TRUE(assignmentA && assignmentA->literal == "a");
     ASSERT_TRUE(assignment5 && assignment5->val == 5);
 }
 TEST(ParserTests, ParserParsesIfWithElseCorrectly) {
-    auto program = WRAPPED_IN_MAIN("if(a==b){a = 5;}else a = 6;");
+    auto program = WRAPPED_IN_MAIN("if(a==b){a = 5;}else{ a = 6;}");
     auto ast = parseProgram(program);
     auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
     auto ifExpr = CAST_NODE_IF_TYPE(statements.at(0), If);
     ASSERT_TRUE(ifExpr && ifExpr->condition && ifExpr->thenBranch && ifExpr->elseBranch);
     auto elseExpr = CAST_NODE_IF_TYPE(ifExpr->elseBranch, Scope);
-    ASSERT_TRUE(elseExpr && elseExpr->scoped);
-    auto assignment = CAST_NODE_IF_TYPE(elseExpr->scoped, Assignment);
+    ASSERT_TRUE(elseExpr && elseExpr->scoped.at(0));
+    auto assignment = CAST_NODE_IF_TYPE(elseExpr->scoped.at(0), Assignment);
     ASSERT_TRUE(assignment);
     auto a = CAST_NODE_IF_TYPE(assignment->left, Name);
     ASSERT_TRUE(a && a->literal == "a");
@@ -113,7 +111,7 @@ TEST(ParserTests, ParserParsesWhileCorrectly) {
     ASSERT_TRUE(NODE_IS(whileSt.condition, Value));
     ASSERT_TRUE(NODE_IS(whileSt.body, Scope));
     auto& body = NODE_AS_REF(whileSt.body, Scope);
-    ASSERT_TRUE(NODE_IS(body.scoped, ExpressionStatement));
+    ASSERT_TRUE(NODE_IS(body.scoped.at(0), ExpressionStatement));
 }
 
 TEST(ParserTests, ParserParsesEmptyReturnCorrectly) {
@@ -175,7 +173,7 @@ TEST(ParserTests, ParserFunctionCall) {
     auto& f1 = *ASSERT_AND_CONVERT(add.operand1, FunctionCall);
     auto& f2 = *ASSERT_AND_CONVERT(add.operand2, FunctionCall);
 
-     auto& f1callName = NODE_AS_REF(f1.name, Name);
+    auto& f1callName = NODE_AS_REF(f1.name, Name);
     auto& f2callName = NODE_AS_REF(f2.name, Name);
     ASSERT_EQ(f1callName.literal, "fun");
     ASSERT_EQ(f2callName.literal, "fun");
@@ -188,6 +186,43 @@ TEST(ParserTests, ParserFunctionCall) {
     auto& f2b = *ASSERT_AND_CONVERT(f2argList.right, Name);
     ASSERT_EQ(f2a.literal, "a");
     ASSERT_EQ(f2b.literal, "b");
+}
+
+TEST(ParserTests, ArrayIndexingNormal) {
+    auto program = WRAPPED_IN_MAIN("a[1];b[a*23];");
+    auto ast = parseProgram(program);
+    auto& main = *ASSERT_AND_CONVERT(ast.getTopLevel().at(0), Function);
+    auto& st1 = *ASSERT_AND_CONVERT(main.body.at(0), ExpressionStatement);
+    auto& st2 = *ASSERT_AND_CONVERT(main.body.at(1), ExpressionStatement);
+
+    auto& indexing1 = *ASSERT_AND_CONVERT(st1.expression, ArrayIndexing);
+    auto& indexing2 = *ASSERT_AND_CONVERT(st2.expression, ArrayIndexing);
+
+    auto& arr1 = *ASSERT_AND_CONVERT(indexing1.array, Name);
+    ASSERT_EQ(arr1.literal, "a");
+    auto& arr2 = *ASSERT_AND_CONVERT(indexing2.array, Name);
+    ASSERT_EQ(arr2.literal, "b");
+    auto& index1 = *ASSERT_AND_CONVERT(indexing1.index, Value);
+    ASSERT_EQ(index1.val, 1);
+    auto& index2 = *ASSERT_AND_CONVERT(indexing2.index, BinaryOperator);
+    auto& index2A = *ASSERT_AND_CONVERT(index2.operand1, Name);
+    auto& index2_23 = *ASSERT_AND_CONVERT(index2.operand2, Value);
+
+    ASSERT_EQ(index2A.literal, "a");
+    ASSERT_EQ(index2_23.val, 23);
+    ASSERT_EQ(index2.type, TokenType::Star);
+}
+
+TEST(ParserTests, ArraySizespec) {
+    auto program = WRAPPED_IN_MAIN("a[b@1*8];");
+    auto ast = parseProgram(program);
+    auto& main = *ASSERT_AND_CONVERT(ast.getTopLevel().at(0), Function);
+    auto& st1 = *ASSERT_AND_CONVERT(main.body.at(0), ExpressionStatement);
+    auto& indexing1 = *ASSERT_AND_CONVERT(st1.expression, ArrayIndexing);
+    auto& sizespec = *ASSERT_AND_CONVERT(indexing1.index, BinaryOperator);
+    ASSERT_EQ(sizespec.type, TokenType::Sizespec);
+    auto& b = *ASSERT_AND_CONVERT(sizespec.operand1, Name);
+    auto& sizeOp = *ASSERT_AND_CONVERT(sizespec.operand2, BinaryOperator);
 }
 
 TEST(ParserTests, ParserDoesNotThrowWithExampleFromWebsite) {
@@ -234,5 +269,5 @@ TEST(ParserTests, ParserDoesNotThrowWithExampleFromWebsite) {
         return var;
     }
 )";
-    // auto ast = parseProgram(program);
+    auto ast = parseProgram(program);
 }

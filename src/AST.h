@@ -23,6 +23,7 @@ enum class ExpressionType {
     Return,
     FunctionCall,
     CommaList,
+    ArrayIndexing,
 };
 
 #define NODE_AS_PTR(node, TYPE) (static_cast<const TYPE*>(node.get()))
@@ -120,9 +121,15 @@ struct Assignment : Statement {
 };
 
 struct Scope : Statement {
-    Node scoped;
-    Scope(Node scoped) : scoped{std::move(scoped)} {}
-    std::string toString() const override { return "{" + scoped->toString() + "}"; }
+    std::vector<Node> scoped;
+    Scope(std::vector<Node> scoped) : scoped{std::move(scoped)} {}
+    std::string toString() const override {
+        std::string retVal = "{\n";
+        for (auto& s : scoped) {
+            retVal += s->toString() + "\n";
+        }
+        return retVal + "}\n";
+    }
     constexpr ExpressionType getType() const override { return ExpressionType::Scope; }
 };
 
@@ -156,7 +163,7 @@ struct Function : Statement {
         header += "\n";
         return header;
     }
-    constexpr ExpressionType getType() const override { return ExpressionType::If; }
+    constexpr ExpressionType getType() const override { return ExpressionType::Function; }
 };
 
 struct While : Statement {
@@ -187,7 +194,8 @@ struct FunctionCall : Expression {
 
     FunctionCall(Node name, std::optional<Node> args) : name{std::move(name)}, args{std::move(args)} {}
     std::string toString() const override {
-        return std::format("calling function {} with args ({})", name->toString(), args ? args.value()->toString() : "");
+        return std::format("calling function {} with args ({})", name->toString(),
+                           args ? args.value()->toString() : "");
     }
     constexpr ExpressionType getType() const override { return ExpressionType::FunctionCall; }
 };
@@ -199,4 +207,13 @@ struct CommaList : Expression {
     CommaList(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {}
     std::string toString() const override { return std::format("{}, {}", left->toString(), right->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::CommaList; }
+};
+
+struct ArrayIndexing : Expression {
+    Node array;
+    Node index;
+
+    ArrayIndexing(Node array, Node index) : array{std::move(array)}, index{std::move(index)} {}
+    std::string toString() const override { return std::format("{}[{}]", array->toString(), index->toString()); }
+    constexpr ExpressionType getType() const override { return ExpressionType::ArrayIndexing; }
 };
