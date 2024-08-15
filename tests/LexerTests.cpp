@@ -12,6 +12,13 @@ TEST(LexerTests, LexerRecognisesEquals) {
     ASSERT_TRUE(correct == scanned.at(0));
 }
 
+TEST(LexerTests, DoesNotGetConfusedWithKeywordPrefixIdentifier) {
+    auto scanned = scan("ifNotKeyword");
+    Token correct{"ifNotKeyword", TokenType::Identifier};
+    std::cout<<tokenTypeToString(scanned.at(0).type);
+    ASSERT_EQ(correct, scanned.at(0));
+}
+
 TEST(LexerTests, LexerRecognisesElseKW) {
     auto scanned = scan("else");
     Token correct{"else", TokenType::Else};

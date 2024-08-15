@@ -37,8 +37,12 @@ constexpr std::optional<std::string_view> tryParseExactMatch(auto& curr, auto en
             return {};
         }
     }
-    curr = helper;
-    return match;
+    // identifier: [a-zA-Z_][a-zA-Z0-9_]*"
+    if (helper == end || (!isalnum(*helper) && !(*helper == '_'))) {
+        curr = helper;
+        return match;
+    } 
+    return {};
 }
 
 constexpr std::optional<Token> tryParseKeyword(auto& curr, auto end) {
@@ -106,7 +110,7 @@ constexpr std::optional<Token> lexNextToken(auto& curr, auto end) {
             return Token{incrementCurr(curr, 2), TokenType::Uneqal};
         return Token{incrementCurr(curr, 1), TokenType::Exclamation_Mark};
     case '=':
-        if(isNextChar(curr, end, '='))
+        if (isNextChar(curr, end, '='))
             return Token{incrementCurr(curr, 2), TokenType::Equals};
         return Token{incrementCurr(curr, 1), TokenType::Assignment};
     case '>':

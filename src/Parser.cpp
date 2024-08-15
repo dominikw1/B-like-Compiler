@@ -264,6 +264,7 @@ std::vector<Node> Parser::parseFunctions() {
     for (auto function = parseFunction(); function; function = parseFunction()) {
         // std::cout << function->toString() << std::endl;
         functions.push_back(std::move(function));
+        std::cout<<functions.back()->toString()<<std::endl;
     }
     return functions;
 }
