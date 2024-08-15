@@ -155,8 +155,9 @@ TEST(ParserTests, ParserFunctionCall) {
 
     ASSERT_FALSE(call1.args);
     ASSERT_TRUE(call2.args);
-    ASSERT_TRUE(NODE_IS(call2.args.value(), CommaList));
-    auto& argList = NODE_AS_REF(call2.args.value(), CommaList);
+
+    auto& argListWithParens = *ASSERT_AND_CONVERT(call2.args.value(), Parenthesised);
+    auto& argList = NODE_AS_REF(argListWithParens.inner, CommaList);
     auto& a = *ASSERT_AND_CONVERT(argList.left, Name);
     auto& bSide = *ASSERT_AND_CONVERT(argList.right, CommaList);
     auto& b = *ASSERT_AND_CONVERT(bSide.left, Name);
@@ -175,8 +176,9 @@ TEST(ParserTests, ParserFunctionCall) {
 
     ASSERT_FALSE(f1.args);
     ASSERT_TRUE(f2.args);
-    ASSERT_TRUE(NODE_IS(f2.args.value(), CommaList));
-    auto& f2argList = NODE_AS_REF(f2.args.value(), CommaList);
+    ASSERT_TRUE(NODE_IS(f2.args.value(), Parenthesised));
+    auto& f2argListPs = NODE_AS_REF(f2.args.value(), Parenthesised);
+    auto& f2argList = *ASSERT_AND_CONVERT(f2argListPs.inner, CommaList);
     auto& f2a = *ASSERT_AND_CONVERT(f2argList.left, Name);
     auto& f2b = *ASSERT_AND_CONVERT(f2argList.right, Name);
     ASSERT_EQ(f2a.literal, "a");
@@ -220,7 +222,7 @@ TEST(ParserTests, ArraySizespec) {
     auto& sizeOp = *ASSERT_AND_CONVERT(sizespec.operand2, Value);
 }
 
-auto websiteProgram  = R"(  
+auto websiteProgram = R"(  
     gauss(x) {
         register res = -0;
         while (x > 0) {

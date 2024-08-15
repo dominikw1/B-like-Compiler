@@ -24,6 +24,7 @@ enum class ExpressionType {
     FunctionCall,
     CommaList,
     ArrayIndexing,
+    Parenthesised,
 };
 
 #define NODE_AS_PTR(node, TYPE) (static_cast<const TYPE*>(node.get()))
@@ -207,6 +208,13 @@ struct CommaList : Expression {
     CommaList(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {}
     std::string toString() const override { return std::format("{}, {}", left->toString(), right->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::CommaList; }
+};
+
+struct Parenthesised : Expression {
+    Node inner;
+    Parenthesised(Node inner) : inner{std::move(inner)} {}
+    std::string toString() const override { return std::format("( {} )", inner->toString()); }
+    constexpr ExpressionType getType() const override { return ExpressionType::Parenthesised; }
 };
 
 struct ArrayIndexing : Expression {

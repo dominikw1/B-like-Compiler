@@ -75,7 +75,7 @@ static Node parseParenGroup(Parser& parser, Token consumed) {
     }
     auto expr = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
-    return expr;
+    return std::make_unique<Parenthesised>(std::move(expr));
 }
 
 [[nodiscard]]
@@ -156,7 +156,7 @@ static Node parseIf(Parser& parser, Token consumed) {
         }
         return nullptr;
     }();
-    
+
     return std::make_unique<If>(std::move(cond), std::move(thenBranch), std::move(elseBranch));
 }
 
