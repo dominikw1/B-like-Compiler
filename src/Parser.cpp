@@ -33,7 +33,7 @@ std::optional<Token> Parser::consumeNextToken() {
         return {};
     auto val = tokens.front();
     tokens = tokens.subspan(1);
-    std::cout << "Consumed " << val.toString() << std::endl;
+ //   std::cout << "Consumed " << val.toString() << std::endl;
     return val;
 }
 
@@ -111,7 +111,7 @@ static Node parseEmptyStatement(Parser& parser, Token consumed) {
 [[nodiscard]]
 static Node parseAssignment(Parser& parser, Token consumed) {
     // we come here through register / auto
-    std::cout << "In correct function\n";
+    //std::cout << "In correct function\n";
     auto left = parser.parseExprWithPrecedence(
         Precedence::PREC_LOGIC_OR); // to make sure we are not accidentally picking up the whole assignemt
     parser.consumeTokenOfType(TokenType::Assignment);
@@ -122,7 +122,7 @@ static Node parseAssignment(Parser& parser, Token consumed) {
 
 [[nodiscard]]
 static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence prec) {
-    std::cout << "in correct method" << std::endl;
+    //std::cout << "in correct method" << std::endl;
     auto right = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Semicolon);
     return std::make_unique<Assignment>(std::move(prev), std::move(right));
@@ -130,7 +130,7 @@ static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedenc
 
 [[nodiscard]]
 static Node parseScope(Parser& parser, Token consumed) {
-    std::cout << "Tryna parse scope " << std::endl;
+    //std::cout << "Tryna parse scope " << std::endl;
     auto ret = std::make_unique<Scope>(parser.parseStatements());
     parser.consumeTokenOfType(TokenType::Right_Brace);
     return ret;
@@ -201,7 +201,7 @@ Node Parser::parseExprWithPrecedence(Precedence prec) {
         throw std::runtime_error("Error parsing token " + token.toString() + ". Expected an expression");
 
     auto parsedPrefix = prefixParser(*this, token);
-    std::cout << "curr prec = " << prec << std::endl;
+    //std::cout << "curr prec = " << prec << std::endl;
     while (prec <= getPrecedenceOfNext()) {
         maybeToken = consumeNextToken();
         if (!maybeToken) {
@@ -230,7 +230,7 @@ std::vector<Node> Parser::parseStatements() {
 
 [[nodiscard]]
 Node Parser::parseStatement() {
-    std::cout << "tryna parse statement" << std::endl;
+    //std::cout << "tryna parse statement" << std::endl;
     if (auto lookahead = lookaheadToken(0); lookahead && lookahead->type == TokenType::Right_Brace) {
         return nullptr; // end of scope
     }
@@ -273,7 +273,7 @@ Precedence Parser::getPrecedenceOfNext() {
     if (!nextToken) {
         return Precedence::PREC_NONE;
     }
-    std::cout << "Taking a lookahead at " << nextToken->toString() << std::endl;
+    //std::cout << "Taking a lookahead at " << nextToken->toString() << std::endl;
     if (auto parser = subParsers.at(nextToken->type); parser.infix != nullptr) {
         return parser.infixPrecedence;
     }

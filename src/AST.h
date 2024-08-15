@@ -221,7 +221,21 @@ struct ArrayIndexing : Expression {
     Node array;
     Node index;
 
-    ArrayIndexing(Node array, Node index) : array{std::move(array)}, index{std::move(index)} {}
+    ArrayIndexing(Node array, Node index) : array{std::move(array)}, index{std::move(index)} {
+        // check array part?
+        if (NODE_IS(this->index, BinaryOperator) &&
+            NODE_AS_REF(this->index, BinaryOperator).type == TokenType::Sizespec) {
+            auto& sizespec = NODE_AS_REF(this->index, BinaryOperator);
+            std::cout << sizespec.toString() << std::endl;
+            if (!NODE_IS(sizespec.operand2, Value)) {
+                throw std::runtime_error("Sizespec must be a number!");
+            }
+            auto& num = NODE_AS_REF(sizespec.operand2, Value).val;
+            if (num != 1 && num != 2 && num != 4 && num != 8) {
+                throw std::runtime_error("Sizespec must be in {1,2,4,8}");
+            }
+        }
+    }
     std::string toString() const override { return std::format("{}[{}]", array->toString(), index->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::ArrayIndexing; }
 };
