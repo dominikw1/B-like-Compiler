@@ -41,7 +41,7 @@ constexpr std::optional<std::string_view> tryParseExactMatch(auto& curr, auto en
     if (helper == end || (!isalnum(*helper) && !(*helper == '_'))) {
         curr = helper;
         return match;
-    } 
+    }
     return {};
 }
 
@@ -163,7 +163,7 @@ constexpr std::optional<Token> lexNextToken(auto& curr, auto end) {
         return *i;
     }
 
-    return Token{"", TokenType::ERROR};
+    throw std::runtime_error("Error lexing");
 }
 
 } // namespace

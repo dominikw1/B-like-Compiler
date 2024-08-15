@@ -41,14 +41,10 @@ enum class TokenType {
     Register,
     Return,
     Sizespec,
-    ERROR,
-    Undecided,
 };
 
 inline std::string_view tokenTypeToString(const TokenType type) {
     switch (type) {
-    case TokenType::ERROR:
-        return "ERROR";
     case TokenType::Plus:
         return "Plus";
     case TokenType::Star:

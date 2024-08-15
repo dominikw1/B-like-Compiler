@@ -209,7 +209,7 @@ TEST(ParserTests, ArrayIndexingNormal) {
 }
 
 TEST(ParserTests, ArraySizespec) {
-    auto program = WRAPPED_IN_MAIN("a[b@1*8];");
+    auto program = WRAPPED_IN_MAIN("a[b@8];");
     auto ast = parseProgram(program);
     auto& main = *ASSERT_AND_CONVERT(ast.getTopLevel().at(0), Function);
     auto& st1 = *ASSERT_AND_CONVERT(main.body.at(0), ExpressionStatement);
@@ -217,7 +217,7 @@ TEST(ParserTests, ArraySizespec) {
     auto& sizespec = *ASSERT_AND_CONVERT(indexing1.index, BinaryOperator);
     ASSERT_EQ(sizespec.type, TokenType::Sizespec);
     auto& b = *ASSERT_AND_CONVERT(sizespec.operand1, Name);
-    auto& sizeOp = *ASSERT_AND_CONVERT(sizespec.operand2, BinaryOperator);
+    auto& sizeOp = *ASSERT_AND_CONVERT(sizespec.operand2, Value);
 }
 
 auto websiteProgram  = R"(  
