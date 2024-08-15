@@ -147,18 +147,16 @@ static Node parseIf(Parser& parser, Token consumed) {
     parser.consumeTokenOfType(TokenType::Left_Parenthesis);
     auto cond = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
-    auto leftBrace = parser.consumeTokenOfType(TokenType::Left_Brace);
-    auto thenBranch = parseScope(parser, std::move(leftBrace));
+    auto thenBranch = parser.parseStatement();
 
     auto elseBranch = [&parser]() -> Node {
         if (parser.isNextTokenOfType(TokenType::Else)) {
             parser.consumeTokenOfType(TokenType::Else);
-            auto brace = parser.consumeTokenOfType(TokenType::Left_Brace);
-            auto ret = parseScope(parser, std::move(brace));
-            return ret;
+            return parser.parseStatement();
         }
         return nullptr;
     }();
+    
     return std::make_unique<If>(std::move(cond), std::move(thenBranch), std::move(elseBranch));
 }
 
@@ -264,7 +262,7 @@ std::vector<Node> Parser::parseFunctions() {
     for (auto function = parseFunction(); function; function = parseFunction()) {
         // std::cout << function->toString() << std::endl;
         functions.push_back(std::move(function));
-        std::cout<<functions.back()->toString()<<std::endl;
+        std::cout << functions.back()->toString() << std::endl;
     }
     return functions;
 }

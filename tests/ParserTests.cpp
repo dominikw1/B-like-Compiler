@@ -25,7 +25,7 @@ AST parseProgram(std::string_view program) {
 }
 
 TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
-    auto program = WRAPPED_IN_MAIN("if(a==b){a = 5;}");
+    auto program = WRAPPED_IN_MAIN("if(a==b)a = 5;");
     auto ast = parseProgram(program);
     auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
     ASSERT_EQ(statements.at(0)->getType(), ExpressionType::If);
@@ -36,24 +36,19 @@ TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
     auto& bInCond = NODE_AS_REF(equalsExpr.operand2, Name);
     ASSERT_EQ(aInCond.literal, "a");
     ASSERT_EQ(bInCond.literal, "b");
-    ASSERT_TRUE(NODE_IS(ifExpr.thenBranch, Scope));
-    auto& scope = NODE_AS_REF(ifExpr.thenBranch, Scope);
-    ASSERT_TRUE(NODE_IS(scope.scoped.at(0), Assignment));
-    auto& assignmentStatement = NODE_AS_REF(scope.scoped.at(0), Assignment);
+    auto& assignmentStatement = NODE_AS_REF(ifExpr.thenBranch, Assignment);
     auto assignmentA = CAST_NODE_IF_TYPE(assignmentStatement.left, Name);
     auto assignment5 = CAST_NODE_IF_TYPE(assignmentStatement.right, Value);
     ASSERT_TRUE(assignmentA && assignmentA->literal == "a");
     ASSERT_TRUE(assignment5 && assignment5->val == 5);
 }
 TEST(ParserTests, ParserParsesIfWithElseCorrectly) {
-    auto program = WRAPPED_IN_MAIN("if(a==b){a = 5;}else{ a = 6;}");
+    auto program = WRAPPED_IN_MAIN("if(a==b)a = 5; else a = 6;");
     auto ast = parseProgram(program);
     auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
     auto ifExpr = CAST_NODE_IF_TYPE(statements.at(0), If);
     ASSERT_TRUE(ifExpr && ifExpr->condition && ifExpr->thenBranch && ifExpr->elseBranch);
-    auto elseExpr = CAST_NODE_IF_TYPE(ifExpr->elseBranch, Scope);
-    ASSERT_TRUE(elseExpr && elseExpr->scoped.at(0));
-    auto assignment = CAST_NODE_IF_TYPE(elseExpr->scoped.at(0), Assignment);
+    auto assignment = CAST_NODE_IF_TYPE(ifExpr->elseBranch, Assignment);
     ASSERT_TRUE(assignment);
     auto a = CAST_NODE_IF_TYPE(assignment->left, Name);
     ASSERT_TRUE(a && a->literal == "a");
@@ -225,9 +220,9 @@ TEST(ParserTests, ArraySizespec) {
     auto& sizeOp = *ASSERT_AND_CONVERT(sizespec.operand2, BinaryOperator);
 }
 
-TEST(ParserTests, ParserDoesNotThrowWithExampleFromWebsite) {
-    auto program = R"(  gauss(x) {
-    register res = -0;
+auto websiteProgram  = R"(  
+    gauss(x) {
+        register res = -0;
         while (x > 0) {
             res = res + x;
             x = x - 1;
@@ -269,5 +264,5 @@ TEST(ParserTests, ParserDoesNotThrowWithExampleFromWebsite) {
         return var;
     }
 )";
-    auto ast = parseProgram(program);
-}
+
+TEST(ParserTests, ParserDoesNotThrowWithExampleFromWebsite) { ASSERT_NO_THROW(parseProgram(websiteProgram)); }
