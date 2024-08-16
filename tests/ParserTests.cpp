@@ -48,7 +48,7 @@ TEST(ParserTests, ParserParsesIfWithElseCorrectly) {
     auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
     auto ifExpr = CAST_NODE_IF_TYPE(statements.at(0), If);
     ASSERT_TRUE(ifExpr && ifExpr->condition && ifExpr->thenBranch && ifExpr->elseBranch);
-    auto assignment = CAST_NODE_IF_TYPE(ifExpr->elseBranch, Assignment);
+    auto assignment = CAST_NODE_IF_TYPE(ifExpr->elseBranch.value(), Assignment);
     ASSERT_TRUE(assignment);
     auto a = CAST_NODE_IF_TYPE(assignment->left, Name);
     ASSERT_TRUE(a && a->literal == "a");
