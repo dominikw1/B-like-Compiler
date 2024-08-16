@@ -48,7 +48,7 @@ class AST {
   public:
     AST(std::vector<Node> toplevel) : toplevel{std::move(toplevel)} {}
     const std::vector<Node>& getTopLevel() const { return toplevel; };
-    Node take(size_t index) { return std::move(toplevel[index]); };
+    void analyze() const;
 };
 
 struct Value : Expression {
@@ -216,6 +216,12 @@ struct CommaList : Expression {
     std::string toString() const override { return std::format("{}, {}", left->toString(), right->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::CommaList; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    std::uint32_t getNumInList() const {
+        if (NODE_IS(right, CommaList)) {
+            return 1 + NODE_AS_REF(right, CommaList).getNumInList();
+        }
+        return 2;
+    }
 };
 
 struct Parenthesised : Expression {

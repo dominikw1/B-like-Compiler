@@ -11,6 +11,24 @@
         }                                                                                                              \
     } while (0);
 
+void AST::analyze() const {
+    SymbolScope scope{};
+    for (auto& func : toplevel) {
+        auto& funAsFunc = NODE_AS_REF(func, Function);
+        std::uint32_t argCnt = [&]() -> std::uint32_t {
+            if (!funAsFunc.argList) {
+                return 0;
+            }
+            if (!NODE_IS(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner, CommaList)) {
+                return 1;
+            }
+            return NODE_AS_REF(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner, CommaList).getNumInList();
+        }();
+        scope.functions[NODE_AS_REF(funAsFunc.name, Name).literal] = FunctionSymbol{.numArgs = argCnt};
+        func->doAnalysis(scope, 0);
+    }
+}
+
 void Value::doAnalysis(SymbolScope scope, std::uint32_t depth) const {}
 
 void Name::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
@@ -261,8 +279,17 @@ void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     if (!scope.functions.contains(NODE_AS_REF(name, Name).literal)) {
         throw std::runtime_error("Only functions can be called");
     }
+    auto argCnt = 0;
     if (args) {
         args.value()->doAnalysis(scope, depth);
+        auto& list = NODE_AS_REF(args.value(), Parenthesised);
+        if (NODE_IS(list.inner, CommaList))
+            argCnt = NODE_AS_REF(list.inner, CommaList).getNumInList();
+        else
+            argCnt = 1;
+    }
+    if (argCnt != scope.functions.at(NODE_AS_REF(name, Name).literal).numArgs) {
+        throw std::runtime_error("Number of arguments does not match declaration");
     }
 }
 
