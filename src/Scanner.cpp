@@ -102,6 +102,13 @@ constexpr std::optional<Token> lexNextToken(auto& curr, auto end) {
         //  case '.':
         //    return Token{incrementCurr(curr, 1), TokenType::Dot};
     case '/':
+        if (isNextChar(curr, end, '/')) {
+            while (curr != end && *curr != '\n') {
+                if (curr == end)
+                    return std::nullopt;
+                return lexNextToken(curr, end);
+            }
+        }
         return Token{incrementCurr(curr, 1), TokenType::Slash};
     case '*':
         return Token{incrementCurr(curr, 1), TokenType::Star};
