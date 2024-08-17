@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include <iostream>
 #include <string>
+namespace ParsingInternals {
 // Heavily inspired by Crafting Interpreters by Robert Nystrom
 
 enum Precedence : unsigned int {
@@ -338,4 +339,13 @@ AST Parser::parse() {
         throw std::runtime_error("Malformed program");
     }
     return AST{std::move(funcs)};
+}
+
+} // namespace ParsingInternals
+
+AST parse(std::span<const Token> tokens) {
+    ParsingInternals::Parser p{tokens};
+    auto ast = p.parse();
+    ast.analyze();
+    return ast;
 }

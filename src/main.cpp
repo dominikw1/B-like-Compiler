@@ -3,17 +3,58 @@
 #include <iostream>
 #include <span>
 
-int main() {
-    auto program = "1+3\n;5*2+2+5/4;\nakfak;\nhihi;\nfoo+bar;FO+bar;;a = 2+5*3;if(true){blub;} else hi;";
-    try {
-        auto lexed{scan(program)};
-        for (auto& l : lexed) {
-            std::cout << l.lexeme << " " << std::endl;
+constexpr auto websiteProgram = R"(  
+    gauss(x) {
+        register res = -0;
+        while (x > 0) {
+            res = res + x;
+            x = x - 1;
         }
-        Parser parser{lexed};
+        return res;
+    }
 
-        AST ast{parser.parse()};
+    ifTest(x) {
+        if (x < -5)
+            return;
+        x = x + 3;
+    }
 
+    isBool(x) { return !!x == x; }
+
+    baz(a) { return; }
+
+
+
+    foo(a, b) {
+        a[b] = b;
+        return a[b] + a[b@1];
+    }
+    callTest(a, b) {
+        register c = foo(a, b);
+        return baz(c) + baz(a) + baz(c);
+    }
+
+    unreachableCode(a) {
+        if (a > 0) return a;
+        else return -a;
+        return a + 1;
+    }
+
+
+    addrof(ptr) {
+        auto var = 1;
+        ptr[1] = &var;
+        register ptr2 = &ptr[1];
+        ptr2[0] = 2;
+        return var;
+    }
+)";
+
+int main() {
+
+    try {
+        auto lexed{scan(websiteProgram)};
+        auto ast{parse(lexed)};
     } catch (std::exception& e) {
         std::cout << "exception " << e.what() << std::endl;
     }

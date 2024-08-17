@@ -222,6 +222,37 @@ struct CommaList : Expression {
         }
         return 2;
     }
+
+    bool assertForAllElems(auto pred) const {
+        if (!pred(left)) {
+            return false;
+        }
+        if (NODE_IS(right, CommaList)) {
+            return NODE_AS_REF(right, CommaList).assertForAllElems(pred);
+        }
+        return pred(right);
+    }
+
+    std::vector<std::string_view> getAllNamesOnTopLevel() const {
+        if (NODE_IS(right, CommaList)) {
+            auto v = NODE_AS_REF(right, CommaList).getAllNamesOnTopLevel();
+            if (NODE_IS(left, Name)) {
+                v.push_back(NODE_AS_REF(left, Name).literal);
+                return v;
+            }
+            return v;
+        }
+        if (NODE_IS(left, Name)) {
+            if (NODE_IS(right, Name)) {
+                return {NODE_AS_REF(left, Name).literal, NODE_AS_REF(right, Name).literal};
+            }
+            return {NODE_AS_REF(left, Name).literal};
+        }
+        if (NODE_IS(right, Name)) {
+            return {NODE_AS_REF(right, Name).literal};
+        }
+        return {};
+    }
 };
 
 struct Parenthesised : Expression {

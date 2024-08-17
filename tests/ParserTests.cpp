@@ -20,7 +20,7 @@ using namespace std::literals;
 
 AST parseProgram(std::string_view program) {
     auto lexed = scan(program);
-    Parser p{lexed};
+    ParsingInternals::Parser p{lexed};
     return p.parse();
 }
 

@@ -1,11 +1,12 @@
 #include "AST.h"
-
+#include <string>
+#include <unordered_set>
 #define ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(node, scope)                                                               \
                                                                                                                        \
     do {                                                                                                               \
         if (NODE_IS(node, Name)) {                                                                                     \
             auto& lit = NODE_AS_REF(node, Name).literal;                                                               \
-            if (scope.functions.contains(lit)) {                                                                       \
+            if (scope.functions.contains(std::string(lit))) {                                                          \
                 throw std::runtime_error("Function found where variable expected");                                    \
             }                                                                                                          \
         }                                                                                                              \
@@ -15,6 +16,9 @@ void AST::analyze() const {
     SymbolScope scope{};
     for (auto& func : toplevel) {
         auto& funAsFunc = NODE_AS_REF(func, Function);
+        if (scope.functions.contains(std::string(NODE_AS_REF(funAsFunc.name, Name).literal))) {
+            throw std::runtime_error("Redefinition of function");
+        }
         std::uint32_t argCnt = [&]() -> std::uint32_t {
             if (!funAsFunc.argList) {
                 return 0;
@@ -24,7 +28,7 @@ void AST::analyze() const {
             }
             return NODE_AS_REF(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner, CommaList).getNumInList();
         }();
-        scope.functions[NODE_AS_REF(funAsFunc.name, Name).literal] = FunctionSymbol{.numArgs = argCnt};
+        scope.functions[std::string(NODE_AS_REF(funAsFunc.name, Name).literal)] = FunctionSymbol{.numArgs = argCnt};
         func->doAnalysis(scope, 0);
     }
 }
@@ -32,7 +36,8 @@ void AST::analyze() const {
 void Value::doAnalysis(SymbolScope scope, std::uint32_t depth) const {}
 
 void Name::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    if (scope.functions.count(literal) == 0 && scope.variables.contains(literal) == 0) {
+    if (scope.functions.count(std::string(literal)) == 0 && scope.variables.contains(std::string(literal)) == 0) {
+        scope.dump();
         throw std::runtime_error(std::format("Referenced {} not in scope", literal));
     }
 }
@@ -56,7 +61,7 @@ PrefixOperator::PrefixOperator(TokenType type, Node operand) : type{type}, opera
 }
 
 void doCheckForAddressOf(const SymbolScope& scope, const Node& operand) {
-    auto name = [&]() {
+    auto name = std::string([&]() {
         auto* id = CAST_NODE_IF_TYPE(operand, Name);
         if (id) {
             return id->literal;
@@ -69,7 +74,7 @@ void doCheckForAddressOf(const SymbolScope& scope, const Node& operand) {
             }
         }
         throw std::runtime_error("Operand of address-of operator must be identifier or array indexing expr");
-    }();
+    }());
 
     if (scope.functions.count(name) == 0) {
         auto& var = scope.variables.at(name); // must therefore be variable
@@ -122,14 +127,22 @@ Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
 }
 
 void Assignment::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    auto& name = NODE_AS_REF(left, Name).literal;
+    auto name = [&]() {
+        if (NODE_IS(left, Name)) {
+            return std::string(NODE_AS_REF(left, Name).literal);
+            ;
+        }
+        auto& arr = NODE_AS_REF(left, ArrayIndexing);
+        return std::string(NODE_AS_REF(arr.array, Name).literal);
+    }();
     if (scope.functions.contains(name)) {
         throw std::runtime_error("Cannot declare variable with same name as function");
     }
     if (scope.variables.contains(name)) {
         auto& var = scope.variables.at(name);
-        if (var.depthDecl == depth) {
-            throw std::runtime_error("Cannot redeclare variable of same name at same scope depth");
+        if (var.depthDecl == depth && modifyer) {
+            throw std::runtime_error(
+                std::format("Cannot redeclare variable {} of same name at same scope depth", name));
         }
     }
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(right, scope);
@@ -147,7 +160,7 @@ void Scope::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
         if (NODE_IS(scopedStatement, Assignment)) {
             auto& assignment = NODE_AS_REF(scopedStatement, Assignment);
             if (assignment.modifyer) { // no param -> new!
-                scope.variables[NODE_AS_REF(assignment.left, Name).literal] = {
+                scope.variables[std::string(NODE_AS_REF(assignment.left, Name).literal)] = {
                     .depthDecl = depth,
                     .type = (assignment.modifyer.value().type == TokenType::Register) ? VariableType::Register
                                                                                       : VariableType::Auto};
@@ -209,19 +222,38 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
 }
 
 void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    if (scope.functions.contains(NODE_AS_REF(name, Name).literal)) {
-        throw std::runtime_error("Redefinition of function");
-    }
     if (argList) {
-        ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(argList.value(), scope);
-        argList.value()->doAnalysis(scope, depth);
+        const auto& parenthesised = NODE_AS_REF(argList.value(), Parenthesised).inner;
+        if (NODE_IS(parenthesised, Name)) {
+            const auto& parName = NODE_AS_REF(parenthesised, Name);
+            ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(parenthesised, scope);
+            scope.variables[std::string(parName.literal)] = {.depthDecl = depth + 1, .type = VariableType::Parameter};
+        } else {
+            auto& commaList = NODE_AS_REF(parenthesised, CommaList);
+            if (!commaList.assertForAllElems([&](const Node& n) {
+                    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(n, scope);
+                    return NODE_IS(n, Name);
+                })) {
+                throw std::runtime_error("Parameters must be non-function identifiers");
+            }
+            const auto& names = commaList.getAllNamesOnTopLevel();
+            std::unordered_set<std::string_view> uniquenessChecker;
+            for (auto& n : names) {
+                uniquenessChecker.insert(n);
+                // use the iteration to do proper bookkeeping
+                scope.variables[std::string(n)] = {.depthDecl = depth + 1, .type = VariableType::Parameter};
+            }
+            if (uniquenessChecker.size() != names.size()) {
+                throw std::runtime_error("Parameter names msut be unique");
+            }
+        }
     }
     for (auto& st : body) {
         st->doAnalysis(scope, depth);
         if (NODE_IS(st, Assignment)) {
             auto& assignment = NODE_AS_REF(st, Assignment);
             if (assignment.modifyer) { // no param -> new!
-                scope.variables[NODE_AS_REF(assignment.left, Name).literal] = {
+                scope.variables[std::string(NODE_AS_REF(assignment.left, Name).literal)] = {
                     .depthDecl = depth,
                     .type = (assignment.modifyer.value().type == TokenType::Register) ? VariableType::Register
                                                                                       : VariableType::Auto};
@@ -276,7 +308,7 @@ FunctionCall::FunctionCall(Node name, std::optional<Node> args) : name{std::move
 
 void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     name->doAnalysis(scope, depth);
-    if (!scope.functions.contains(NODE_AS_REF(name, Name).literal)) {
+    if (!scope.functions.contains(std::string(NODE_AS_REF(name, Name).literal))) {
         throw std::runtime_error("Only functions can be called");
     }
     auto argCnt = 0;
@@ -288,8 +320,9 @@ void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
         else
             argCnt = 1;
     }
-    if (argCnt != scope.functions.at(NODE_AS_REF(name, Name).literal).numArgs) {
-        throw std::runtime_error("Number of arguments does not match declaration");
+    if (argCnt != scope.functions.at(std::string(NODE_AS_REF(name, Name).literal)).numArgs) {
+        throw std::runtime_error(
+            std::format("Number of arguments of {} does not match declaration", NODE_AS_REF(name, Name).literal));
     }
 }
 

@@ -9,6 +9,10 @@
 #include <stdexcept>
 #include <unordered_map>
 
+AST parse(std::span<const Token> tokens);
+
+namespace ParsingInternals {
+
 enum Precedence : unsigned int;
 
 class Parser {
@@ -37,3 +41,4 @@ class Parser {
     Parser(std::span<const Token> tokens);
     AST parse();
 };
+} // namespace ParsingInternals
