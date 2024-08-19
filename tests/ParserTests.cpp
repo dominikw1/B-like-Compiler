@@ -1,5 +1,5 @@
-#include "../src/Parser.h"
-#include "../src/Scanner.h"
+#include <Parser.h>
+#include <Scanner.h>
 #include <algorithm>
 #include <functional>
 #include <gtest/gtest.h>

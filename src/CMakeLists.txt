@@ -1,1 +1,1 @@
-add_library(Parser Parser.cpp Scanner.cpp AST.cpp)
+add_subdirectory(Parser)

@@ -1,4 +1,4 @@
-#include "../src/Scanner.h"
+#include "Scanner.h"
 #include <gtest/gtest.h>
 
 TEST(LexerTests, LexerRecognisesKeywordIf) {
