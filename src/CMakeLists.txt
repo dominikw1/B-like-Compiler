@@ -1,1 +1,2 @@
-add_subdirectory(Parser IRGenerator)
+add_subdirectory(Parser)
+add_subdirectory(IRGenerator)

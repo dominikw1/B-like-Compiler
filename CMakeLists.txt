@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.17)
-project(GRA_Cache)
+project(Compiler)
 
 add_compile_options(-Wall -Wextra -pedantic)
 

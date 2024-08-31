@@ -48,6 +48,7 @@ class AST {
   public:
     AST(std::vector<Node> toplevel) : toplevel{std::move(toplevel)} {}
     const std::vector<Node>& getTopLevel() const { return toplevel; };
+    std::vector<Node> takeTopLevel() { return std::move(toplevel); };
     void analyze() const;
 };
 

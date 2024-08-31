@@ -13,6 +13,7 @@ add_definitions(-g -Wall -Wextra -pedantic)
 
 
 include_directories(${PROJECT_SOURCE_DIR}/src/Parser)
+include_directories(${PROJECT_SOURCE_DIR}/src/IRGenerator)
 add_executable(tests LexerTests.cpp ParserTests.cpp)
 target_link_libraries(tests -lubsan)
 
