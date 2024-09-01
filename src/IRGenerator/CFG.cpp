@@ -20,7 +20,6 @@ std::shared_ptr<BasicBlock> generateForWhile(const Expression& curr, std::shared
         auto& scope = NODE_AS_REF(whileSt.body, Scope);
         auto scoped{rawPointerize(scope.scoped)};
         subBlock = generateFromStatement(scoped.begin(), scoped.end());
-
     } else {
         std::vector<const Expression*> temp{whileSt.body.get()};
         subBlock = generateFromStatement(temp.begin(), temp.end());
@@ -33,6 +32,8 @@ std::shared_ptr<BasicBlock> generateForWhile(const Expression& curr, std::shared
                                                    std::vector<const Expression*>{whileSt.condition.get()});
     whileBlock->posterior.at(0)->replaceByIf(whileBlock,
                                              [](const BasicBlock& b) { return b.type == BlockType::FunctionEpilogue; });
+    std::for_each(whileBlock->posterior.begin(), whileBlock->posterior.end(),
+                  [&whileBlock](auto& post) { post->predecessors.push_back(whileBlock.get()); });
     return whileBlock;
 }
 
@@ -74,17 +75,24 @@ std::shared_ptr<BasicBlock> generateForIf(const Expression& curr, std::shared_pt
     post.push_back(std::move(thenBlock));
     post.push_back(std::move(elseBlock));
 
-    return std::make_shared<BasicBlock>(BlockType::If, std::move(post),
-                                        std::vector<const Expression*>{ifSt.condition.get()});
+    auto ifBlock = std::make_shared<BasicBlock>(BlockType::If, std::move(post),
+                                                std::vector<const Expression*>{ifSt.condition.get()});
+    std::for_each(ifBlock->posterior.begin(), ifBlock->posterior.end(),
+                  [&ifBlock](auto& post) { post->predecessors.push_back(ifBlock.get()); });
+    return ifBlock;
 }
 
 std::shared_ptr<BasicBlock> generateForFuncCall(const Expression& curr, std::shared_ptr<BasicBlock> posterior) {
     const auto& call = static_cast<const FunctionCall&>(curr);
     std::vector<std::shared_ptr<BasicBlock>> post;
     post.push_back(std::move(posterior));
-    return std::make_shared<BasicBlock>(
+    auto funcCallBlock = std::make_shared<BasicBlock>(
         BlockType::FunctionCall, std::move(post),
         std::vector<const Expression*>{call.name.get(), call.args.has_value() ? call.args.value().get() : nullptr});
+
+    std::for_each(funcCallBlock->posterior.begin(), funcCallBlock->posterior.end(),
+                  [&funcCallBlock](auto& post) { post->predecessors.push_back(funcCallBlock.get()); });
+    return funcCallBlock;
 }
 
 std::shared_ptr<BasicBlock> generateforReturn(const Expression& returnEx) {
@@ -92,7 +100,11 @@ std::shared_ptr<BasicBlock> generateforReturn(const Expression& returnEx) {
     std::vector<const Expression*> extraInfo;
     extraInfo.push_back(casted.what ? casted.what.value().get() : nullptr);
     std::vector<std::shared_ptr<BasicBlock>> post{};
-    return std::make_shared<BasicBlock>(BlockType::Return, std::move(post), std::move(extraInfo));
+    auto returnBlock = std::make_shared<BasicBlock>(BlockType::Return, std::move(post), std::move(extraInfo));
+
+    std::for_each(returnBlock->posterior.begin(), returnBlock->posterior.end(),
+                  [&returnBlock](auto& post) { post->predecessors.push_back(returnBlock.get()); });
+    return returnBlock;
 }
 
 std::shared_ptr<BasicBlock> generateFromStatement(std::vector<const Expression*>::iterator statementsBegin,
@@ -121,7 +133,9 @@ std::shared_ptr<BasicBlock> generateFromStatement(std::vector<const Expression*>
             ++statementsBegin;
         }
         posterior.push_back(generateFromStatement(statementsBegin, statementsEnd));
-        return std::make_shared<BasicBlock>(BlockType::Normal, std::move(posterior), std::move(nodes));
+        auto statementSeq = std::make_shared<BasicBlock>(BlockType::Normal, std::move(posterior), std::move(nodes));
+        statementSeq->posterior.at(0)->predecessors.push_back(statementSeq.get());
+        return statementSeq;
     }
 }
 
@@ -150,6 +164,7 @@ void BasicBlock::replaceByIf(std::shared_ptr<BasicBlock> repl, std::function<boo
         if (posterior[i] != nullptr) {
             if (pred(*posterior[i])) {
                 posterior[i] = repl;
+                posterior[i]->predecessors.push_back(this);
             } else {
                 posterior[i]->replaceByIf(repl, pred);
             }

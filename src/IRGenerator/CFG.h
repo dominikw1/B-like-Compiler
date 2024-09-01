@@ -11,6 +11,7 @@ struct BasicBlock {
     BlockType type;
     std::vector<const Expression*> extraInfo;
     std::vector<std::shared_ptr<BasicBlock>> posterior;
+    std::vector<const BasicBlock*> predecessors;
     BasicBlock(BlockType t, std::vector<std::shared_ptr<BasicBlock>> post) : type{t}, posterior{std::move(post)} {}
     BasicBlock(BlockType t, std::vector<std::shared_ptr<BasicBlock>> post, std::vector<const Expression*> extraInfo)
         : type{t}, posterior{std::move(post)}, extraInfo{std::move(extraInfo)} {}
