@@ -14,8 +14,8 @@ add_definitions(-g -Wall -Wextra -pedantic)
 
 include_directories(${PROJECT_SOURCE_DIR}/src/Parser)
 include_directories(${PROJECT_SOURCE_DIR}/src/IRGenerator)
-add_executable(tests LexerTests.cpp ParserTests.cpp)
+add_executable(tests LexerTests.cpp ParserTests.cpp CFGTests.cpp)
 target_link_libraries(tests -lubsan)
 
-target_link_libraries(tests gtest_main gtest Parser)
+target_link_libraries(tests gtest_main gtest Parser IRGenerator)
 gtest_discover_tests(tests)
