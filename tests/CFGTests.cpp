@@ -3,6 +3,7 @@
 #include "Scanner.h"
 #include <gtest/gtest.h>
 
+using namespace CFG;
 auto program =
     R"(    
 

@@ -3,6 +3,8 @@
 #include <ranges>
 #include <span>
 
+namespace CFG {
+
 std::shared_ptr<BasicBlock> generateFromStatement(std::vector<const Expression*>::iterator statementsBegin,
                                                   std::vector<const Expression*>::iterator statementsEnd);
 
@@ -141,7 +143,7 @@ std::shared_ptr<BasicBlock> generateFromStatement(std::vector<const Expression*>
 
 CFG generateCFG(const AST& ast) {
     CFG cfg{};
-    std::cout << "CFG generation..." << std::endl;
+    // std::cout << "CFG generation..." << std::endl;
     for (const auto& fawFunc : ast.getTopLevel()) {
         const auto& function = NODE_AS_REF(fawFunc, Function);
         auto& statements = function.body;
@@ -151,12 +153,15 @@ CFG generateCFG(const AST& ast) {
         inner.push_back(generateFromStatement(ptrised.begin(), ptrised.end()));
         auto args = std::vector<const Expression*>{(function.argList ? function.argList.value().get() : nullptr)};
         BasicBlock b(BlockType::FunctionPrologue, std::move(inner), std::move(args));
-        std::cout << NODE_AS_REF(function.name, Name).literal << " : \n";
-        b.print();
+        if (!function.isVoid) {
+            b.extraInfo.push_back(nullptr); // this is an indicator for non-void => i64 ret type
+        }
         cfg.functions.emplace(std::pair{NODE_AS_REF(function.name, Name).literal, std::move(b)});
     }
     return cfg;
 }
+
+bool doesFunctionHaveNonVoidReturnType(const BasicBlock* prelude) { return prelude->extraInfo.size() == 2; }
 
 void BasicBlock::replaceByIf(std::shared_ptr<BasicBlock> repl, std::function<bool(const BasicBlock&)> pred) {
     std::cout << posterior.size() << std::endl;
@@ -232,3 +237,5 @@ void BasicBlock::print(const BasicBlock* until) {
         break;
     }
 }
+
+} // namespace CFG

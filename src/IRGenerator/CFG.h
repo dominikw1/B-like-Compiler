@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+namespace CFG {
 
 enum class BlockType { FunctionPrologue, FunctionEpilogue, FunctionCall, While, If, Normal, Return };
 
@@ -26,3 +27,6 @@ struct CFG {
 
 // Lifetime of AST must be at least as long as that of CFG
 CFG generateCFG(const AST& ast);
+bool doesFunctionHaveNonVoidReturnType(const BasicBlock* prelude);
+
+} // namespace CFG

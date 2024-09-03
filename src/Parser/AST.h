@@ -157,6 +157,7 @@ struct Function : Statement {
     Node name;
     std::optional<Node> argList{std::nullopt};
     std::vector<Node> body;
+    bool isVoid = true;
     Function(Node name, std::optional<Node> argList, std::vector<Node> body);
 
     std::string toString() const override {

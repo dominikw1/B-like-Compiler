@@ -219,6 +219,25 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
                     [](auto& statement) { return NODE_IS(statement, Function); })) {
         throw std::runtime_error("Function definition within function definition");
     }
+    if (auto returnSt = std::find_if(this->body.begin(), this->body.end(),
+                                     [](auto& statement) { return NODE_IS(statement, Return); });
+        returnSt != this->body.end()) {
+        const auto& ret = NODE_AS_REF((*returnSt), Return);
+        if (ret.what) {
+            isVoid = false;
+        } else {
+            isVoid = true;
+        }
+        if (!std::all_of(this->body.begin(), this->body.end(), [isVoid = this->isVoid](auto& statement) {
+                if (!NODE_IS(statement, Return))
+                    return true;
+                return isVoid == !(NODE_AS_REF(statement, Return).what.has_value());
+            })) {
+            throw std::runtime_error("Inconsistent return type");
+        }
+    } else {
+        isVoid = true;
+    }
 }
 
 void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
