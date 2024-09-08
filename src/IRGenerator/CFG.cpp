@@ -4,6 +4,7 @@
 #include <span>
 
 namespace CFG {
+using namespace AST;
 
 std::shared_ptr<BasicBlock> generateFromStatement(std::vector<const Expression*>::iterator statementsBegin,
                                                   std::vector<const Expression*>::iterator statementsEnd);
@@ -141,7 +142,7 @@ std::shared_ptr<BasicBlock> generateFromStatement(std::vector<const Expression*>
     }
 }
 
-CFG generateCFG(const AST& ast) {
+CFG generateCFG(const AST::AST& ast) {
     CFG cfg{};
     // std::cout << "CFG generation..." << std::endl;
     for (const auto& fawFunc : ast.getTopLevel()) {

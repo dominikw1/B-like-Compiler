@@ -13,7 +13,11 @@
 #include <unordered_map>
 #include <unordered_set>
 
-// Single use...
+struct IntermediateRepresentation {
+    std::unique_ptr<llvm::LLVMContext> context;
+    std::unique_ptr<llvm::Module> module;
+};
+
 class SSAGenerator {
     std::unique_ptr<llvm::LLVMContext> context;
     std::unique_ptr<llvm::Module> module;
@@ -33,11 +37,27 @@ class SSAGenerator {
 
     llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name,
                                           const CFG::BasicBlock* correspondingCFGBlock);
-    void codegenFunction(std::string_view name, const CFG::BasicBlock*);
-    void codegenBlock(llvm::BasicBlock curr, const CFG::BasicBlock* currCFG, llvm::Function* function);
+    void codegenBlock(llvm::BasicBlock* curr, const CFG::BasicBlock* currCFG, llvm::Function* function);
+    llvm::Value* codegenExpression(llvm::BasicBlock* curr, const AST::Expression& expr);
+    void codegenStatementSeq(llvm::BasicBlock* curr, const CFG::BasicBlock* currCFG, llvm::Function* function);
+    void codegenExprStatement(llvm::BasicBlock*, const AST::Statement& statement);
+    void codegenReturnSt(llvm::BasicBlock*, const AST::Expression* returnNode);
 
   public:
     SSAGenerator()
         : context{{std::make_unique<llvm::LLVMContext>()}}, module{std::make_unique<llvm::Module>("mainMod", *context)},
           builder{std::make_unique<llvm::IRBuilder<>>(*context)} {}
+
+    void codegenFunction(std::string_view name, const CFG::BasicBlock*);
+    IntermediateRepresentation extractResult() {
+        return IntermediateRepresentation{std::move(context), std::move(module)};
+    }
 };
+
+inline IntermediateRepresentation generateIR(CFG::CFG& cfg) {
+    SSAGenerator ssaGen{};
+    for (auto& [name, prelude] : cfg.functions) {
+        ssaGen.codegenFunction(name, &prelude);
+    }
+    return ssaGen.extractResult();
+}

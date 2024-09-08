@@ -1,6 +1,7 @@
 #include "AST.h"
 #include <string>
 #include <unordered_set>
+
 #define ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(node, scope)                                                               \
                                                                                                                        \
     do {                                                                                                               \
@@ -11,7 +12,7 @@
             }                                                                                                          \
         }                                                                                                              \
     } while (0);
-
+namespace AST {
 void AST::analyze() const {
     SymbolScope scope{};
     for (auto& func : toplevel) {
@@ -386,3 +387,5 @@ void ArrayIndexing::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     array->doAnalysis(scope, depth);
     index->doAnalysis(scope, depth);
 }
+
+} // namespace AST

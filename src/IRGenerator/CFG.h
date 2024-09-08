@@ -6,6 +6,8 @@
 #include <vector>
 namespace CFG {
 
+using namespace AST;
+
 enum class BlockType { FunctionPrologue, FunctionEpilogue, FunctionCall, While, If, Normal, Return };
 
 struct BasicBlock {
@@ -26,7 +28,7 @@ struct CFG {
 };
 
 // Lifetime of AST must be at least as long as that of CFG
-CFG generateCFG(const AST& ast);
+CFG generateCFG(const AST::AST& ast);
 bool doesFunctionHaveNonVoidReturnType(const BasicBlock* prelude);
 
 } // namespace CFG

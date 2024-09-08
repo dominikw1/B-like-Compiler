@@ -1,9 +1,11 @@
 #include "Parser.h"
 #include <iostream>
 #include <string>
+
 namespace ParsingInternals {
 // Heavily inspired by Crafting Interpreters by Robert Nystrom
 
+using namespace AST;
 enum Precedence : unsigned int {
     PREC_NONE,
     PREC_ASSIGNMENT,
@@ -263,7 +265,7 @@ std::vector<Node> Parser::parseFunctions() {
     for (auto function = parseFunction(); function; function = parseFunction()) {
         // std::cout << function->toString() << std::endl;
         functions.push_back(std::move(function));
-        std::cout << functions.back()->toString() << std::endl;
+        //std::cout << functions.back()->toString() << std::endl;
     }
     return functions;
 }
@@ -331,19 +333,19 @@ void registerAllSubParsers() {
     subParsers[TokenType::Comma] = {nullptr, &parseCommaList, PREC_ASSIGNMENT};
 }
 
-AST Parser::parse() {
-    std::cout << "Starting parsing..." << std::endl;
+AST::AST Parser::parse() {
+    //std::cout << "Starting parsing..." << std::endl;
     registerAllSubParsers();
     auto funcs = parseFunctions();
     if (tokens.size() != 0) {
         throw std::runtime_error("Malformed program");
     }
-    return AST{std::move(funcs)};
+    return AST::AST{std::move(funcs)};
 }
 
 } // namespace ParsingInternals
 
-AST parse(std::span<const Token> tokens) {
+AST::AST parse(std::span<const Token> tokens) {
     ParsingInternals::Parser p{tokens};
     auto ast = p.parse();
     ast.analyze();

@@ -41,11 +41,70 @@ llvm::BasicBlock* SSAGenerator::createNewBasicBlock(llvm::Function* parentFuncti
     return newBlock;
 }
 
-void SSAGenerator::codegenBlock(llvm::BasicBlock curr, const CFG::BasicBlock* currCFG, llvm::Function* function) {}
+llvm::Value* SSAGenerator::codegenExpression(llvm::BasicBlock* curr, const AST::Expression& expr) {
+    switch (expr.getType()) {
+    case AST::ExpressionType::Value:
+        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), static_cast<const AST::Value&>(expr).val);
+    default:
+        throw std::runtime_error("Not implemented");
+    }
+}
+void SSAGenerator::codegenExprStatement(llvm::BasicBlock*, const AST::Statement& statement) {
+    // value = codegenExpression(curr, *((static_cast<const AST::ExpressionStatement&>(*statement)).expression));
+    // value = builder->CreateAdd(value, value, "add");
+    //   cast<llvm::Instruction>(value)->insertInto(curr, curr->end());
+}
+
+void SSAGenerator::codegenStatementSeq(llvm::BasicBlock* curr, const CFG::BasicBlock* currCFG,
+                                       llvm::Function* function) {
+    builder->SetInsertPoint(curr);
+    for (auto& statement : currCFG->extraInfo) {
+
+        switch (statement->getType()) {
+        case AST::ExpressionType::ExpressionStatement:
+            // codegenExprStatement(curr, static_cast<const AST::Statement&>(*statement));
+            break;
+        // case AST::ExpressionType::Return:
+        //   break;
+        default:
+            throw std::runtime_error("Not implemented");
+        }
+    }
+}
+
+void SSAGenerator::codegenReturnSt(llvm::BasicBlock* curr, const AST::Expression* ret) {
+    if (ret) {
+        builder->CreateRet(codegenExpression(curr, *ret));
+    } else {
+        builder->CreateRetVoid();
+    }
+}
+
+void SSAGenerator::codegenBlock(llvm::BasicBlock* curr, const CFG::BasicBlock* currCFG, llvm::Function* function) {
+    builder->SetInsertPoint(curr);
+    switch (currCFG->type) {
+    case CFG::BlockType::FunctionPrologue:
+        // params dealt with in parent function
+        codegenBlock(curr, currCFG->posterior.at(0).get(), function);
+        break;
+    case CFG::BlockType::Normal:
+        std::cout << "Codegening seq" << std::endl;
+        codegenStatementSeq(curr, currCFG, function);
+        codegenBlock(curr, currCFG->posterior.at(0).get(), function);
+        break;
+    case CFG::BlockType::FunctionEpilogue:
+        break;
+    case CFG::BlockType::Return:
+        codegenReturnSt(curr, currCFG->extraInfo.at(0));
+        break;
+    default:
+        throw std::runtime_error("Not implemented block type");
+    }
+}
 
 void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock* prelude) {
-    auto* params = static_cast<const CommaList*>(prelude->extraInfo[0]);
-    auto paramNames = params->getAllNamesOnTopLevel();
+    auto* params = static_cast<const AST::CommaList*>(prelude->extraInfo[0]);
+    auto paramNames = params ? params->getAllNamesOnTopLevel() : std::vector<std::string_view>{};
     size_t numParams = prelude->extraInfo.at(0) == nullptr ? 0 : params->getNumInList();
     std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
     auto type =
@@ -61,4 +120,11 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
     }
 
     llvm::BasicBlock* entry = createNewBasicBlock(func, "entry", prelude);
+
+    builder->SetInsertPoint(entry);
+    // builder->CreateRet(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true));
+
+    codegenBlock(entry, prelude, func);
+
+    llvm::verifyFunction(*func);
 }

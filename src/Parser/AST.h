@@ -9,7 +9,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-
+namespace AST {
 enum class ExpressionType {
     Value,
     Name,
@@ -274,3 +274,4 @@ struct ArrayIndexing : Expression {
     constexpr ExpressionType getType() const override { return ExpressionType::ArrayIndexing; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
 };
+}

@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
-AST parse(std::span<const Token> tokens);
+AST::AST parse(std::span<const Token> tokens);
 
 namespace ParsingInternals {
 
@@ -27,18 +27,18 @@ class Parser {
     std::span<const Token> tokens;
 
   public:
-    Node parseExpression();
-    Node parseStatement();
-    std::vector<Node> parseStatements();
-    Node parseFunction();
-    std::vector<Node> parseFunctions();
-    Node parseExprWithPrecedence(Precedence prec);
+    AST::Node parseExpression();
+    AST::Node parseStatement();
+    std::vector<AST::Node> parseStatements();
+    AST::Node parseFunction();
+    std::vector<AST::Node> parseFunctions();
+    AST::Node parseExprWithPrecedence(Precedence prec);
     std::optional<Token> consumeNextToken();
     std::optional<Token> lookaheadToken(std::uint32_t lookahead);
     bool isNextTokenOfType(TokenType type);
     Token consumeTokenOfType(TokenType type);
     Precedence getPrecedenceOfNext();
     Parser(std::span<const Token> tokens);
-    AST parse();
+    AST::AST parse();
 };
 } // namespace ParsingInternals

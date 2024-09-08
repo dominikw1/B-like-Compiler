@@ -10,6 +10,7 @@
 #include <vector>
 
 using namespace std::literals;
+using namespace AST;
 
 #define WRAPPED_IN_MAIN(program) ("main(){" program "}")
 #define ASSERT_AND_CONVERT(node, type)                                                                                 \
@@ -18,7 +19,7 @@ using namespace std::literals;
         return NODE_AS_PTR(node, type);                                                                                \
     }();
 
-AST parseProgram(std::string_view program) {
+AST::AST parseProgram(std::string_view program) {
     auto lexed = scan(program);
     ParsingInternals::Parser p{lexed};
     return p.parse();
