@@ -13,6 +13,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+
 struct IntermediateRepresentation {
     std::unique_ptr<llvm::LLVMContext> context;
     std::unique_ptr<llvm::Module> module;
@@ -25,17 +26,16 @@ class SSAGenerator {
     llvm::BasicBlock* currBlock; // raw pointer as we do not explicitly manage the memory
     llvm::Function* currFunc;
 
-    std::unordered_map<const CFG::BasicBlock*, llvm::BasicBlock*> cfgToLLVM{};
+    std::unordered_map<std::string_view, std::unordered_map<const llvm::BasicBlock*, llvm::Value*>> currentDef;
+    std::unordered_set<const llvm::BasicBlock*> sealed;
+    std::unordered_map<const llvm::BasicBlock*, std::unordered_map<std::string_view, llvm::Value*>> incompletePhis;
 
-    std::unordered_map<std::string_view, std::map<const CFG::BasicBlock*, llvm::Value*>> currentDef;
-    std::unordered_set<const CFG::BasicBlock*> sealed;
-    std::unordered_map<const CFG::BasicBlock*, std::unordered_map<std::string_view, llvm::Value*>> incompletePhis;
-    void writeVariable(std::string_view var, const CFG::BasicBlock* block, llvm::Value* value);
+    void writeVariable(std::string_view var, const llvm::BasicBlock* block, llvm::Value* value);
 
-    void addPhiOperands(std::string_view var, llvm::Value* phi);
-
-    llvm::Value* readVariableRecursive(std::string_view var, const CFG::BasicBlock* block);
-    llvm::Value* readVariable(std::string_view var, const CFG::BasicBlock* block);
+    llvm::Value* addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block);
+    void sealBlock(llvm::BasicBlock* block);
+    llvm::Value* readVariableRecursive(std::string_view var, llvm::BasicBlock* block);
+    llvm::Value* readVariable(std::string_view var, llvm::BasicBlock* block);
 
     llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name,
                                           const CFG::BasicBlock* correspondingCFGBlock);
@@ -46,6 +46,7 @@ class SSAGenerator {
     void codegenExprStatement(const AST::Statement& statement, const CFG::BasicBlock* currCFG);
     void codegenReturnSt(const AST::Expression* returnNode, const CFG::BasicBlock* currCFG);
     llvm::Value* codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenPlus(const AST::Expression& left, const AST::Expression& right, const CFG::BasicBlock* currCFG);
     llvm::Value* codegenAndLogical(const AST::Expression& left, const AST::Expression& right,
                                    const CFG::BasicBlock* currCFG);
     llvm::Value* codegenAndBit(const AST::Expression& left, const AST::Expression& right,

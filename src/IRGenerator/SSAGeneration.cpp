@@ -3,45 +3,52 @@
 #include "llvm/IR/Instructions.h"
 #include <vector>
 
-void SSAGenerator::writeVariable(std::string_view var, const CFG::BasicBlock* block, llvm::Value* value) {
+void SSAGenerator::writeVariable(std::string_view var, const llvm::BasicBlock* block, llvm::Value* value) {
     currentDef[var][block] = value;
 }
 
-void SSAGenerator::addPhiOperands(std::string_view var, llvm::Value* phi) {
-    // for (auto* pred : phi.block->predecessors) {
-    // phi.operands.push_back(readVariable(var, pred));
-    //}
+llvm::Value* SSAGenerator::addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block) {
+    for (auto* pred : llvm::predecessors(block)) {
+        phi->addIncoming(readVariable(var, pred), pred);
+    }
+    // TODO: reduce phi
+    return phi;
 }
 
-llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, const CFG::BasicBlock* block) {
+void SSAGenerator::sealBlock(llvm::BasicBlock* block) {
+    for (auto var : incompletePhis[block]) {
+        addPhiOperands(var, incompletePhis[block][var]);
+    }
+    sealed.insert(block);
+}
+
+llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::BasicBlock* block) {
     llvm::Value* val{};
     if (!sealed.contains(block)) {
         // Incomplete CFG
-        // val = {.block = block};
+        val = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), 0);
         incompletePhis[block][var] = val;
-    } else if (block->predecessors.size() == 1) {
+    } else if (llvm::pred_size(block) == 1) {
         // Optimize the common case of one predecessor : No phi needed
-        val = readVariable(var, block->predecessors[0]);
+        val = readVariable(var, *llvm::pred_begin(block));
     } else {
-        // val = {.block = block};
-        writeVariable(var, block, val);
-        //  addPhiOperands(variable, val)
+        auto* phi = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), llvm::pred_size(block));
+        writeVariable(var, block, phi);
+        val = addPhiOperands(var, phi, block);
     }
+    writeVariable(var, block, val);
+    return val;
 }
 
-llvm::Value* SSAGenerator::readVariable(std::string_view var, const CFG::BasicBlock* block) {
+llvm::Value* SSAGenerator::readVariable(std::string_view var, llvm::BasicBlock* block) {
     if (currentDef[var].contains(block))
         return currentDef[var][block];
-    // hack for debug reasons
-    return (*currentDef[var].begin()).second;
     return readVariableRecursive(var, block);
 }
 
 llvm::BasicBlock* SSAGenerator::createNewBasicBlock(llvm::Function* parentFunction, std::string_view name,
                                                     const CFG::BasicBlock* correspondingCFGBlock) {
-    auto* newBlock = llvm::BasicBlock::Create(*context, name, parentFunction);
-    cfgToLLVM[correspondingCFGBlock] = newBlock;
-    return newBlock;
+    return llvm::BasicBlock::Create(*context, name, parentFunction);
 }
 
 void SSAGenerator::switchToBlock(llvm::BasicBlock* newBlock) {
@@ -55,17 +62,13 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
     auto* resultBlock = createNewBasicBlock(currFunc, "boolExprResult", currCFG);
 
     llvm::Value* leftVal = codegenExpression(left, currCFG);
-    std::cout << "left Val: ";
-    leftVal->dump();
     llvm::Value* leftValBoolean = builder->CreateICmpNE(
         leftVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
-    std::cout << "\nleft ValBool: ";
-    leftValBoolean->dump();
-    std::cout << std::endl;
     llvm::Value* branchToFalse = builder->CreateCondBr(leftValBoolean, resultBlock, falseBlock);
 
     auto* trueBlock = currBlock;
     switchToBlock(falseBlock);
+    sealBlock(falseBlock);
 
     llvm::Value* rightVal = codegenExpression(right, currCFG);
     llvm::Value* rightValBoolean =
@@ -73,6 +76,7 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
 
     llvm::Value* branchToResult = builder->CreateBr(resultBlock);
     switchToBlock(resultBlock);
+    sealBlock(resultBlock);
 
     auto exprResult = llvm::PHINode::Create(llvm::Type::getInt1Ty(*context), 2, "boolExprResultNode");
     exprResult->insertInto(resultBlock, resultBlock->begin());
@@ -88,12 +92,20 @@ llvm::Value* SSAGenerator::codegenAndBit(const AST::Expression& left, const AST:
     return builder->CreateAnd(leftV, codegenExpression(right, currCFG));
 }
 
+llvm::Value* SSAGenerator::codegenPlus(const AST::Expression& left, const AST::Expression& right,
+                                       const CFG::BasicBlock* currCFG) {
+    auto* leftV = codegenExpression(left, currCFG);
+    return builder->CreateAdd(leftV, codegenExpression(right, currCFG), "add");
+}
+
 llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
     auto& binExp = static_cast<const AST::BinaryOperator&>(expr);
 
     switch (binExp.type) {
     case TokenType::And_Bit:
         return codegenAndBit(*binExp.operand1, *binExp.operand2, currCFG);
+    case TokenType::Plus:
+        return codegenPlus(*binExp.operand1, *binExp.operand2, currCFG);
     case TokenType::And_Logical:
         return codegenAndLogical(*binExp.operand1, *binExp.operand2, currCFG);
     default:
@@ -109,7 +121,7 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr, const 
     case AST::ExpressionType::BinaryOperator:
         return codegenBinaryOp(expr, currCFG);
     case AST::ExpressionType::Name:
-        return readVariable(static_cast<const AST::Name&>(expr).literal, currCFG);
+        return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
     default:
         throw std::runtime_error(std::format("Not implemented expr {}", expr.toString()));
     }
@@ -148,7 +160,7 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
         codegenBlock(currCFG->posterior.at(0).get());
         break;
     case CFG::BlockType::Normal:
-        std::cout << "Codegening seq" << std::endl;
+        // std::cout << "Codegening seq" << std::endl;
         codegenStatementSeq(currCFG);
         codegenBlock(currCFG->posterior.at(0).get());
         break;
@@ -176,7 +188,6 @@ std::vector<std::string_view> extractParameterNamesFromFunction(const CFG::Basic
 }
 
 void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock* prelude) {
-    // std::cout << prelude->extraInfo[0]->toString();
     auto paramNames = extractParameterNamesFromFunction(prelude);
     size_t numParams = paramNames.size();
     std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
@@ -186,18 +197,19 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
                                 parameters, false);
     llvm::FunctionCallee funcCallee = this->module->getOrInsertFunction(name, type);
     currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
+    auto* entryBlock = createNewBasicBlock(currFunc, "entry", prelude);
+    currBlock = entryBlock;
 
     auto argIt = currFunc->arg_begin();
     for (size_t i = 0; i < numParams; ++i) {
-        writeVariable(paramNames.at(i), prelude, argIt);
+        writeVariable(paramNames.at(i), currBlock, argIt);
         (argIt++)->setName(paramNames.at(i));
     }
-
-    currBlock = createNewBasicBlock(currFunc, "entry", prelude);
 
     builder->SetInsertPoint(currBlock);
 
     codegenBlock(prelude);
+    sealBlock(entryBlock);
 
     llvm::verifyFunction(*currFunc);
 }
