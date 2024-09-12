@@ -9,10 +9,10 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include <map>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
-
 struct IntermediateRepresentation {
     std::unique_ptr<llvm::LLVMContext> context;
     std::unique_ptr<llvm::Module> module;
@@ -22,10 +22,12 @@ class SSAGenerator {
     std::unique_ptr<llvm::LLVMContext> context;
     std::unique_ptr<llvm::Module> module;
     std::unique_ptr<llvm::IRBuilder<>> builder;
+    llvm::BasicBlock* currBlock; // raw pointer as we do not explicitly manage the memory
+    llvm::Function* currFunc;
 
     std::unordered_map<const CFG::BasicBlock*, llvm::BasicBlock*> cfgToLLVM{};
 
-    std::unordered_map<std::string_view, std::unordered_map<const CFG::BasicBlock*, llvm::Value*>> currentDef;
+    std::unordered_map<std::string_view, std::map<const CFG::BasicBlock*, llvm::Value*>> currentDef;
     std::unordered_set<const CFG::BasicBlock*> sealed;
     std::unordered_map<const CFG::BasicBlock*, std::unordered_map<std::string_view, llvm::Value*>> incompletePhis;
     void writeVariable(std::string_view var, const CFG::BasicBlock* block, llvm::Value* value);
@@ -37,11 +39,17 @@ class SSAGenerator {
 
     llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name,
                                           const CFG::BasicBlock* correspondingCFGBlock);
-    void codegenBlock(llvm::BasicBlock* curr, const CFG::BasicBlock* currCFG, llvm::Function* function);
-    llvm::Value* codegenExpression(llvm::BasicBlock* curr, const AST::Expression& expr);
-    void codegenStatementSeq(llvm::BasicBlock* curr, const CFG::BasicBlock* currCFG, llvm::Function* function);
-    void codegenExprStatement(llvm::BasicBlock*, const AST::Statement& statement);
-    void codegenReturnSt(llvm::BasicBlock*, const AST::Expression* returnNode);
+    void switchToBlock(llvm::BasicBlock* newBlock);
+    void codegenBlock(const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenExpression(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
+    void codegenStatementSeq(const CFG::BasicBlock* currCFG);
+    void codegenExprStatement(const AST::Statement& statement, const CFG::BasicBlock* currCFG);
+    void codegenReturnSt(const AST::Expression* returnNode, const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenAndLogical(const AST::Expression& left, const AST::Expression& right,
+                                   const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenAndBit(const AST::Expression& left, const AST::Expression& right,
+                               const CFG::BasicBlock* currCFG);
 
   public:
     SSAGenerator()

@@ -4,9 +4,18 @@
 #include "Scanner.h"
 #include <gtest/gtest.h>
 
-TEST(IRGenTests, generatesSimpleExprStatement) {
+TEST(IRGenTests, generatesSimpleReturnStatement) {
     auto program = "main() {return 3;}";
     auto ast = parse(scan(program));
     auto cfg = CFG::generateCFG(ast);
     auto ir = generateIR(cfg);
+}
+
+TEST(IRGenTests, generatesSimpleBoolExpr) {
+    auto program = "main(a,b) {a && b;}";
+    auto ast = parse(scan(program));
+    auto cfg = CFG::generateCFG(ast);
+    auto ir = generateIR(cfg);
+    ir.module->dump();
+    ASSERT_TRUE(false);
 }
