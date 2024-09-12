@@ -17,7 +17,7 @@ llvm::Value* SSAGenerator::addPhiOperands(std::string_view var, llvm::PHINode* p
 
 void SSAGenerator::sealBlock(llvm::BasicBlock* block) {
     for (auto var : incompletePhis[block]) {
-        addPhiOperands(var, incompletePhis[block][var]);
+        addPhiOperands(var.first, llvm::cast<llvm::PHINode>(var.second), block);
     }
     sealed.insert(block);
 }
@@ -114,7 +114,6 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr, const CF
 }
 
 llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
-    std::cout << "in codegen expr" << std::endl;
     switch (expr.getType()) {
     case AST::ExpressionType::Value:
         return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), static_cast<const AST::Value&>(expr).val);
@@ -197,6 +196,11 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
                                 parameters, false);
     llvm::FunctionCallee funcCallee = this->module->getOrInsertFunction(name, type);
     currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
+    if (prelude->posterior.size() == 1 && prelude->posterior[0]->type == CFG::BlockType::FunctionEpilogue) {
+        // empty function
+        return;
+    }
+
     auto* entryBlock = createNewBasicBlock(currFunc, "entry", prelude);
     currBlock = entryBlock;
 
@@ -211,5 +215,14 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
     codegenBlock(prelude);
     sealBlock(entryBlock);
 
-    llvm::verifyFunction(*currFunc);
+    // add empty ret if it is not there already
+    if (currBlock->size() != 0) {
+        if (!currBlock->rbegin()->isTerminator()) {
+            builder->CreateRetVoid();
+        }
+    }
+
+    if (llvm::verifyFunction(*currFunc, &llvm::errs())) {
+        throw std::runtime_error("Invalid function");
+    }
 }
