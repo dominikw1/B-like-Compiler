@@ -37,22 +37,19 @@ class SSAGenerator {
     llvm::Value* readVariableRecursive(std::string_view var, llvm::BasicBlock* block);
     llvm::Value* readVariable(std::string_view var, llvm::BasicBlock* block);
 
-    llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name,
-                                          const CFG::BasicBlock* correspondingCFGBlock);
+    llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name);
     void switchToBlock(llvm::BasicBlock* newBlock);
     void codegenBlock(const CFG::BasicBlock* currCFG);
-    llvm::Value* codegenExpression(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenExpression(const AST::Expression& expr);
     void codegenStatementSeq(const CFG::BasicBlock* currCFG);
-    void codegenExprStatement(const AST::Statement& statement, const CFG::BasicBlock* currCFG);
-    void codegenReturnSt(const AST::Expression* returnNode, const CFG::BasicBlock* currCFG);
-    llvm::Value* codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
+    void codegenExprStatement(const AST::ExpressionStatement& statement);
+    void codegenReturnSt(const AST::Expression* returnNode);
+    void codegenAssignment(const AST::Assignment& assignmentStatement);
 
-    llvm::Value* codegenUnaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
-
-    llvm::Value* codegenAndLogical(const AST::Expression& left, const AST::Expression& right,
-                                   const CFG::BasicBlock* currCFG);
-    llvm::Value* codegenAndBit(const AST::Expression& left, const AST::Expression& right,
-                               const CFG::BasicBlock* currCFG);
+    llvm::Value* codegenBinaryOp(const AST::Expression& expr);
+    llvm::Value* codegenUnaryOp(const AST::Expression& expr);
+    llvm::Value* codegenAndLogical(const AST::Expression& left, const AST::Expression& right);
+    llvm::Value* codegenAndBit(const AST::Expression& left, const AST::Expression& right);
 
   public:
     SSAGenerator()

@@ -1,6 +1,7 @@
 #include "SSAGeneration.h"
 #include "../Parser/AST.h"
 #include "llvm/IR/Instructions.h"
+#include <queue>
 #include <vector>
 
 void SSAGenerator::writeVariable(std::string_view var, const llvm::BasicBlock* block, llvm::Value* value) {
@@ -46,8 +47,7 @@ llvm::Value* SSAGenerator::readVariable(std::string_view var, llvm::BasicBlock* 
     return readVariableRecursive(var, block);
 }
 
-llvm::BasicBlock* SSAGenerator::createNewBasicBlock(llvm::Function* parentFunction, std::string_view name,
-                                                    const CFG::BasicBlock* correspondingCFGBlock) {
+llvm::BasicBlock* SSAGenerator::createNewBasicBlock(llvm::Function* parentFunction, std::string_view name) {
     return llvm::BasicBlock::Create(*context, name, parentFunction);
 }
 
@@ -56,12 +56,11 @@ void SSAGenerator::switchToBlock(llvm::BasicBlock* newBlock) {
     builder->SetInsertPoint(currBlock);
 }
 
-llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const AST::Expression& right,
-                                             const CFG::BasicBlock* currCFG) {
-    auto* falseBlock = createNewBasicBlock(currFunc, "noShortCircuit", currCFG);
-    auto* resultBlock = createNewBasicBlock(currFunc, "boolExprResult", currCFG);
+llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const AST::Expression& right) {
+    auto* falseBlock = createNewBasicBlock(currFunc, "noShortCircuit");
+    auto* resultBlock = createNewBasicBlock(currFunc, "boolExprResult");
 
-    llvm::Value* leftVal = codegenExpression(left, currCFG);
+    llvm::Value* leftVal = codegenExpression(left);
     llvm::Value* leftValBoolean = builder->CreateICmpNE(
         leftVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
     llvm::Value* branchToFalse = builder->CreateCondBr(leftValBoolean, resultBlock, falseBlock);
@@ -70,7 +69,7 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
     switchToBlock(falseBlock);
     sealBlock(falseBlock);
 
-    llvm::Value* rightVal = codegenExpression(right, currCFG);
+    llvm::Value* rightVal = codegenExpression(right);
     llvm::Value* rightValBoolean =
         builder->CreateICmpNE(rightVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0));
 
@@ -85,18 +84,18 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
     return exprResult;
 }
 
-llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
+llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
     auto& binExp = static_cast<const AST::BinaryOperator&>(expr);
     // special handling binops
     switch (binExp.type) {
     case TokenType::And_Logical:
-        return codegenAndLogical(*binExp.operand1, *binExp.operand2, currCFG);
+        return codegenAndLogical(*binExp.operand1, *binExp.operand2);
     default:
         break; // handled later
     }
 
-    auto* left = codegenExpression(*binExp.operand1, currCFG);
-    auto* right = codegenExpression(*binExp.operand2, currCFG);
+    auto* left = codegenExpression(*binExp.operand1);
+    auto* right = codegenExpression(*binExp.operand2);
     switch (binExp.type) {
     case TokenType::And_Bit:
         return builder->CreateAnd(left, right);
@@ -113,36 +112,38 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr, const CF
     }
 }
 
-llvm::Value* SSAGenerator::codegenUnaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
+llvm::Value* SSAGenerator::codegenUnaryOp(const AST::Expression& expr) {
     auto& unExpr = static_cast<const AST::PrefixOperator&>(expr);
     switch (unExpr.type) {
     case TokenType::Minus:
         return builder->CreateSub(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0),
-                                  codegenExpression(*unExpr.operand, currCFG));
+                                  codegenExpression(*unExpr.operand));
     default:
         throw std::runtime_error("unimplemented unop");
     }
 }
 
-llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
+llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
     switch (expr.getType()) {
     case AST::ExpressionType::Value:
         return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), static_cast<const AST::Value&>(expr).val);
     case AST::ExpressionType::BinaryOperator:
-        return codegenBinaryOp(expr, currCFG);
+        return codegenBinaryOp(expr);
     case AST::ExpressionType::Name:
         return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
     case AST::ExpressionType::Parenthesised:
-        return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner, currCFG);
+        return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner);
     case AST::ExpressionType::PrefixOperator:
-        return codegenUnaryOp(expr, currCFG);
+        return codegenUnaryOp(expr);
     default:
         throw std::runtime_error(std::format("Not implemented expr {}", expr.toString()));
     }
 }
-void SSAGenerator::codegenExprStatement(const AST::Statement& statement, const CFG::BasicBlock* currCFG) {
-    codegenExpression(*((static_cast<const AST::ExpressionStatement&>(statement)).expression), currCFG);
+void SSAGenerator::codegenExprStatement(const AST::ExpressionStatement& statement) {
+    codegenExpression(*statement.expression);
 }
+
+void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement) {}
 
 void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
     builder->SetInsertPoint(currBlock);
@@ -150,17 +151,19 @@ void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
 
         switch (statement->getType()) {
         case AST::ExpressionType::ExpressionStatement:
-            codegenExprStatement(static_cast<const AST::Statement&>(*statement), currCFG);
+            codegenExprStatement(static_cast<const AST::ExpressionStatement&>(*statement));
             break;
+        case AST::ExpressionType::Assignment:
+
         default:
             throw std::runtime_error("Not implemented");
         }
     }
 }
 
-void SSAGenerator::codegenReturnSt(const AST::Expression* ret, const CFG::BasicBlock* currCFG) {
+void SSAGenerator::codegenReturnSt(const AST::Expression* ret) {
     if (ret) {
-        builder->CreateRet(codegenExpression(*ret, currCFG));
+        builder->CreateRet(codegenExpression(*ret));
     } else {
         builder->CreateRetVoid();
     }
@@ -181,7 +184,7 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
     case CFG::BlockType::FunctionEpilogue:
         break;
     case CFG::BlockType::Return:
-        codegenReturnSt(currCFG->extraInfo.at(0), currCFG);
+        codegenReturnSt(currCFG->extraInfo.at(0));
         break;
     default:
         throw std::runtime_error("Not implemented block type");
@@ -216,7 +219,7 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
         return;
     }
 
-    auto* entryBlock = createNewBasicBlock(currFunc, "entry", prelude);
+    auto* entryBlock = createNewBasicBlock(currFunc, "entry");
     currBlock = entryBlock;
 
     auto argIt = currFunc->arg_begin();
