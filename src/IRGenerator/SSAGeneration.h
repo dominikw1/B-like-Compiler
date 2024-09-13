@@ -46,7 +46,9 @@ class SSAGenerator {
     void codegenExprStatement(const AST::Statement& statement, const CFG::BasicBlock* currCFG);
     void codegenReturnSt(const AST::Expression* returnNode, const CFG::BasicBlock* currCFG);
     llvm::Value* codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
-    llvm::Value* codegenPlus(const AST::Expression& left, const AST::Expression& right, const CFG::BasicBlock* currCFG);
+
+    llvm::Value* codegenUnaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG);
+
     llvm::Value* codegenAndLogical(const AST::Expression& left, const AST::Expression& right,
                                    const CFG::BasicBlock* currCFG);
     llvm::Value* codegenAndBit(const AST::Expression& left, const AST::Expression& right,

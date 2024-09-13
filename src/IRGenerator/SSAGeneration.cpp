@@ -85,31 +85,42 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
     return exprResult;
 }
 
-llvm::Value* SSAGenerator::codegenAndBit(const AST::Expression& left, const AST::Expression& right,
-                                         const CFG::BasicBlock* currCFG) {
-    auto* leftV = codegenExpression(left, currCFG);
-    // structured this way to enforce evaluation of left before right in case we change state
-    return builder->CreateAnd(leftV, codegenExpression(right, currCFG));
-}
-
-llvm::Value* SSAGenerator::codegenPlus(const AST::Expression& left, const AST::Expression& right,
-                                       const CFG::BasicBlock* currCFG) {
-    auto* leftV = codegenExpression(left, currCFG);
-    return builder->CreateAdd(leftV, codegenExpression(right, currCFG), "add");
-}
-
 llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
     auto& binExp = static_cast<const AST::BinaryOperator&>(expr);
-
+    // special handling binops
     switch (binExp.type) {
-    case TokenType::And_Bit:
-        return codegenAndBit(*binExp.operand1, *binExp.operand2, currCFG);
-    case TokenType::Plus:
-        return codegenPlus(*binExp.operand1, *binExp.operand2, currCFG);
     case TokenType::And_Logical:
         return codegenAndLogical(*binExp.operand1, *binExp.operand2, currCFG);
     default:
+        break; // handled later
+    }
+
+    auto* left = codegenExpression(*binExp.operand1, currCFG);
+    auto* right = codegenExpression(*binExp.operand2, currCFG);
+    switch (binExp.type) {
+    case TokenType::And_Bit:
+        return builder->CreateAnd(left, right);
+    case TokenType::Plus:
+        return builder->CreateAdd(left, right);
+    case TokenType::Minus:
+        return builder->CreateSub(left, right);
+    case TokenType::Star: // if deref it would be unop not bin op
+        return builder->CreateMul(left, right);
+    case TokenType::Slash:
+        return builder->CreateSDiv(left, right);
+    default:
         throw std::runtime_error("Unimplemented binop for codegen");
+    }
+}
+
+llvm::Value* SSAGenerator::codegenUnaryOp(const AST::Expression& expr, const CFG::BasicBlock* currCFG) {
+    auto& unExpr = static_cast<const AST::PrefixOperator&>(expr);
+    switch (unExpr.type) {
+    case TokenType::Minus:
+        return builder->CreateSub(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0),
+                                  codegenExpression(*unExpr.operand, currCFG));
+    default:
+        throw std::runtime_error("unimplemented unop");
     }
 }
 
@@ -121,6 +132,10 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr, const 
         return codegenBinaryOp(expr, currCFG);
     case AST::ExpressionType::Name:
         return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
+    case AST::ExpressionType::Parenthesised:
+        return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner, currCFG);
+    case AST::ExpressionType::PrefixOperator:
+        return codegenUnaryOp(expr, currCFG);
     default:
         throw std::runtime_error(std::format("Not implemented expr {}", expr.toString()));
     }
