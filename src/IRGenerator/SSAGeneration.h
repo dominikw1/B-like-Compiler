@@ -36,6 +36,7 @@ class SSAGenerator {
     void sealBlock(llvm::BasicBlock* block);
     llvm::Value* readVariableRecursive(std::string_view var, llvm::BasicBlock* block);
     llvm::Value* readVariable(std::string_view var, llvm::BasicBlock* block);
+    llvm::Value* readFromPtrIfAlloca(llvm::Value* v);
 
     llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name);
     void switchToBlock(llvm::BasicBlock* newBlock);

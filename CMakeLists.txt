@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 project(Compiler)
 
-add_compile_options(-Wall -Wextra -pedantic)
+add_compile_options(-g -rdynamic -Wall -Wextra -pedantic)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

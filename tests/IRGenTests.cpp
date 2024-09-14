@@ -25,3 +25,4 @@ TEST(IRGenTests, simpleDiv) { VERIFY_VALID("main(a) {return a/2;}"); }
 TEST(IRGenTests, complexArith) { VERIFY_VALID("main(a) {return 2+1*5515/(2*5)-2*111*a/2;}"); }
 TEST(IRGenTests, negation) { VERIFY_VALID("main(a) {return -a;}"); }
 TEST(IRGenTests, lotsOfParentheses) { VERIFY_VALID("main(a) {return -((((a)))+2);}"); }
+TEST(IRGenTests, autoLocalVar) { VERIFY_VALID("main(a) {auto i = 1; return a+i;}"); }

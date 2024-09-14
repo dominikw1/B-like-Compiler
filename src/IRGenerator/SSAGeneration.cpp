@@ -1,7 +1,6 @@
 #include "SSAGeneration.h"
 #include "../Parser/AST.h"
 #include "llvm/IR/Instructions.h"
-#include <queue>
 #include <vector>
 
 void SSAGenerator::writeVariable(std::string_view var, const llvm::BasicBlock* block, llvm::Value* value) {
@@ -21,6 +20,13 @@ void SSAGenerator::sealBlock(llvm::BasicBlock* block) {
         addPhiOperands(var.first, llvm::cast<llvm::PHINode>(var.second), block);
     }
     sealed.insert(block);
+}
+
+llvm::Value* SSAGenerator::readFromPtrIfAlloca(llvm::Value* v) {
+    if (llvm::isa<llvm::AllocaInst>(v)) {
+        return builder->CreateLoad(llvm::Type::getInt64Ty(*context), v);
+    }
+    return v;
 }
 
 llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::BasicBlock* block) {
@@ -130,7 +136,7 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
     case AST::ExpressionType::BinaryOperator:
         return codegenBinaryOp(expr);
     case AST::ExpressionType::Name:
-        return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
+        return readFromPtrIfAlloca(readVariable(static_cast<const AST::Name&>(expr).literal, currBlock));
     case AST::ExpressionType::Parenthesised:
         return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner);
     case AST::ExpressionType::PrefixOperator:
@@ -143,18 +149,46 @@ void SSAGenerator::codegenExprStatement(const AST::ExpressionStatement& statemen
     codegenExpression(*statement.expression);
 }
 
-void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement) {}
+void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement) {
+    // TODO lets ignore the possibility of array indexing for now
+    if (assignmentStatement.left->getType() != AST::ExpressionType::Name) {
+        return;
+    }
+
+    auto varName = static_cast<const AST::Name&>(*assignmentStatement.left).literal;
+    if (assignmentStatement.modifyer) {
+        // TODO: limit this to only auto vars
+        // if (assignmentStatement.modifyer.value().type == TokenType::Auto) {
+        assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
+        auto& entryBlock = currFunc->getEntryBlock();
+        switchToBlock(&entryBlock);
+        auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
+        switchToBlock(currBlock);
+        writeVariable(varName, currBlock, allocaInst);
+
+        //}
+    }
+    // ig writing is always using stores?
+    builder->CreateStore(codegenExpression(*assignmentStatement.right), readVariable(varName, currBlock));
+}
 
 void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
     builder->SetInsertPoint(currBlock);
     for (auto& statement : currCFG->extraInfo) {
-
         switch (statement->getType()) {
         case AST::ExpressionType::ExpressionStatement:
             codegenExprStatement(static_cast<const AST::ExpressionStatement&>(*statement));
             break;
         case AST::ExpressionType::Assignment:
-
+            codegenAssignment(static_cast<const AST::Assignment&>(*statement));
+            break;
+        case AST::ExpressionType::Return:
+            if (auto& retExpr = static_cast<const AST::Return*>(statement)->what) {
+                codegenReturnSt(retExpr->get());
+            } else {
+                codegenReturnSt(nullptr);
+            }
+            break;
         default:
             throw std::runtime_error("Not implemented");
         }
@@ -177,7 +211,6 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
         codegenBlock(currCFG->posterior.at(0).get());
         break;
     case CFG::BlockType::Normal:
-        // std::cout << "Codegening seq" << std::endl;
         codegenStatementSeq(currCFG);
         codegenBlock(currCFG->posterior.at(0).get());
         break;

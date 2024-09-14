@@ -131,7 +131,6 @@ void Assignment::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     auto name = [&]() {
         if (NODE_IS(left, Name)) {
             return std::string(NODE_AS_REF(left, Name).literal);
-            ;
         }
         auto& arr = NODE_AS_REF(left, ArrayIndexing);
         return std::string(NODE_AS_REF(arr.array, Name).literal);
