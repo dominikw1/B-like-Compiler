@@ -66,11 +66,12 @@ TEST(CFGTests, IfWithoutElseWorks) {
     ASSERT_EQ(ifTest.type, BlockType::FunctionPrologue);
     auto& ifBlcok = *ifTest.posterior.at(0);
     ASSERT_EQ(ifBlcok.type, BlockType::If);
-    ASSERT_EQ(ifBlcok.posterior.size(), 2);
+    ASSERT_EQ(ifBlcok.posterior.size(), 3);
+    ASSERT_EQ(ifBlcok.posterior[1], nullptr); // the else
     auto& thenB = *ifBlcok.posterior.at(0);
-    auto& elseB = *ifBlcok.posterior.at(1);
+    auto& postIfB = *ifBlcok.posterior.at(2);
     ASSERT_EQ(thenB.type, BlockType::Return);
-    ASSERT_EQ(elseB.type, BlockType::Normal);
+    ASSERT_EQ(postIfB.type, BlockType::Normal);
 }
 
 TEST(CFGTests, whileWorks) {

@@ -42,6 +42,8 @@ std::shared_ptr<BasicBlock> generateForWhile(const Expression& curr, std::shared
 
 std::shared_ptr<BasicBlock> generateForIf(const Expression& curr, std::shared_ptr<BasicBlock> posterior) {
     const If& ifSt = static_cast<const If&>(curr);
+    std::vector<const Expression*> extraInfo = std::vector<const Expression*>{ifSt.condition.get()};
+
     std::shared_ptr<BasicBlock> thenBlock = nullptr;
     if (NODE_IS(ifSt.thenBranch, Scope)) {
         auto& scope = NODE_AS_REF(ifSt.thenBranch, Scope);
@@ -66,22 +68,19 @@ std::shared_ptr<BasicBlock> generateForIf(const Expression& curr, std::shared_pt
             auto temp = std::vector<const Expression*>{ifSt.elseBranch.value().get()};
             elseBlock = generateFromStatement(temp.begin(), temp.end());
         }
-        if (elseBlock->type == BlockType::FunctionEpilogue)
-            elseBlock = posterior;
-        else
-            elseBlock->replaceByIf(posterior,
-                                   [](const BasicBlock& b) { return b.type == BlockType::FunctionEpilogue; });
-    } else {
-        elseBlock = posterior;
     }
+
     std::vector<std::shared_ptr<BasicBlock>> post;
     post.push_back(std::move(thenBlock));
     post.push_back(std::move(elseBlock));
+    // strictly speaking this is not the correct control flow, but makes codegen way easier
+    post.push_back(std::move(posterior));
 
-    auto ifBlock = std::make_shared<BasicBlock>(BlockType::If, std::move(post),
-                                                std::vector<const Expression*>{ifSt.condition.get()});
-    std::for_each(ifBlock->posterior.begin(), ifBlock->posterior.end(),
-                  [&ifBlock](auto& post) { post->predecessors.push_back(ifBlock.get()); });
+    auto ifBlock = std::make_shared<BasicBlock>(BlockType::If, std::move(post), std::move(extraInfo));
+    std::for_each(ifBlock->posterior.begin(), ifBlock->posterior.end(), [&ifBlock](auto& post) {
+        if (post)
+            post->predecessors.push_back(ifBlock.get());
+    });
     return ifBlock;
 }
 
@@ -183,9 +182,14 @@ void printIf(const BasicBlock& ifBlock, const BasicBlock* until) {
     std::cout << "then->";
     if (ifBlock.posterior.at(0).get() != until)
         ifBlock.posterior.at(0)->print();
-    std::cout << "\nelse ->";
-    if (ifBlock.posterior.at(1).get() != until)
-        ifBlock.posterior.at(1)->print();
+    if (ifBlock.posterior[1]) {
+
+        std::cout << "\nelse ->";
+        if (ifBlock.posterior.at(1).get() != until)
+            ifBlock.posterior.at(1)->print();
+        std::cout << std::endl;
+    }
+    ifBlock.posterior[2]->print();
 }
 
 void printWhile(const BasicBlock& whileBlock, const BasicBlock* until) {

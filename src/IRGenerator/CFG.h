@@ -30,5 +30,4 @@ struct CFG {
 // Lifetime of AST must be at least as long as that of CFG
 CFG generateCFG(const AST::AST& ast);
 bool doesFunctionHaveNonVoidReturnType(const BasicBlock* prelude);
-
 } // namespace CFG
