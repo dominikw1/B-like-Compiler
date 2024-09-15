@@ -219,25 +219,29 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
                     [](auto& statement) { return NODE_IS(statement, Function); })) {
         throw std::runtime_error("Function definition within function definition");
     }
-    if (auto returnSt = std::find_if(this->body.begin(), this->body.end(),
-                                     [](auto& statement) { return NODE_IS(statement, Return); });
-        returnSt != this->body.end()) {
-        const auto& ret = NODE_AS_REF((*returnSt), Return);
-        if (ret.what) {
-            isVoid = false;
-        } else {
-            isVoid = true;
-        }
-        if (!std::all_of(this->body.begin(), this->body.end(), [isVoid = this->isVoid](auto& statement) {
-                if (!NODE_IS(statement, Return))
-                    return true;
-                return isVoid == !(NODE_AS_REF(statement, Return).what.has_value());
-            })) {
-            throw std::runtime_error("Inconsistent return type");
-        }
-    } else {
-        isVoid = true;
+
+    auto hasReturnStatementWithVal = [](bool nonVoid) {
+        return [nonVoid](const Expression* expr) {
+            if (expr->getType() == ExpressionType::Return) {
+                auto* returnExpr = static_cast<const Return*>(expr);
+                if (returnExpr->what) {
+                    return nonVoid;
+                } else {
+                    return !nonVoid;
+                }
+            };
+            return false;
+        };
+    };
+    std::function<bool(const Expression*)> predHasVoidRet = hasReturnStatementWithVal(false);
+    std::function<bool(const Expression*)> predHasNonVoidRet = hasReturnStatementWithVal(true);
+
+    bool hasVoidRet = anyOf(predHasVoidRet);
+    bool hasNonVoidRet = anyOf(predHasNonVoidRet);
+    if (hasVoidRet && hasNonVoidRet) {
+        throw std::runtime_error("Inconsistent return type");
     }
+    isVoid = !hasNonVoidRet; // not hasVoidRet as no return statement is necessay for void funcs
 }
 
 void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
@@ -279,6 +283,7 @@ void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
             }
         }
     }
+    // TODO: check all paths return a value if nonvoid
 }
 
 While::While(Node cond, Node body) : condition{std::move(cond)}, body{std::move(body)} {

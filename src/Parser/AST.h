@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -38,6 +39,7 @@ struct Expression {
     virtual bool isStatement() const { return false; }
     virtual void doAnalysis(SymbolScope scope, std::uint32_t depth) const = 0;
     constexpr virtual ExpressionType getType() const = 0;
+    virtual bool anyOf(std::function<bool(const Expression*)>& pred) const { return pred(this); };
 };
 
 using Node = std::unique_ptr<Expression>;
@@ -74,6 +76,9 @@ struct PrefixOperator : Expression {
     PrefixOperator(TokenType type, Node operand);
     constexpr ExpressionType getType() const override { return ExpressionType::PrefixOperator; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || operand->anyOf(pred);
+    };
 };
 
 struct BinaryOperator : Expression {
@@ -87,6 +92,9 @@ struct BinaryOperator : Expression {
     };
     constexpr ExpressionType getType() const override { return ExpressionType::BinaryOperator; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || operand1->anyOf(pred) || operand2->anyOf(pred);
+    }
 };
 /**
 struct PostfixOperator : Expression {
@@ -110,6 +118,10 @@ struct ExpressionStatement : Statement {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::ExpressionStatement; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || expression->anyOf(pred);
+    }
 };
 
 struct Assignment : Statement {
@@ -124,6 +136,9 @@ struct Assignment : Statement {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::Assignment; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || left->anyOf(pred) || right->anyOf(pred);
+    }
 };
 
 struct Scope : Statement {
@@ -138,6 +153,9 @@ struct Scope : Statement {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::Scope; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || std::any_of(scoped.begin(), scoped.end(), [&](const Node& n) { return n->anyOf(pred); });
+    }
 };
 
 struct If : Statement {
@@ -151,6 +169,10 @@ struct If : Statement {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::If; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || condition->anyOf(pred) || thenBranch->anyOf(pred) ||
+               (elseBranch ? elseBranch.value()->anyOf(pred) : false);
+    }
 };
 
 struct Function : Statement {
@@ -171,6 +193,10 @@ struct Function : Statement {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::Function; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || name->anyOf(pred) || (argList ? argList.value()->anyOf(pred) : false) ||
+               std::any_of(body.begin(), body.end(), [&](const Node& n) { return n->anyOf(pred); });
+    }
 };
 
 struct While : Statement {
@@ -184,6 +210,9 @@ struct While : Statement {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::While; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || (condition->anyOf(pred)) || body->anyOf(pred);
+    }
 };
 
 struct Return : Statement {
@@ -195,6 +224,9 @@ struct Return : Statement {
     std::string toString() const override { return std::format("return {}", what ? (*what)->toString() : ""); }
     constexpr ExpressionType getType() const override { return ExpressionType::Return; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || (what ? what.value()->anyOf(pred) : false);
+    }
 };
 
 struct FunctionCall : Expression {
@@ -208,6 +240,9 @@ struct FunctionCall : Expression {
     }
     constexpr ExpressionType getType() const override { return ExpressionType::FunctionCall; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || name->anyOf(pred) || (args ? args.value()->anyOf(pred) : false);
+    }
 };
 
 struct CommaList : Expression {
@@ -255,6 +290,10 @@ struct CommaList : Expression {
         }
         return {};
     }
+
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || left->anyOf(pred) || right->anyOf(pred);
+    }
 };
 
 struct Parenthesised : Expression {
@@ -263,6 +302,7 @@ struct Parenthesised : Expression {
     std::string toString() const override { return std::format("( {} )", inner->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::Parenthesised; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override { return pred(this) || inner->anyOf(pred); }
 };
 
 struct ArrayIndexing : Expression {
@@ -273,5 +313,8 @@ struct ArrayIndexing : Expression {
     std::string toString() const override { return std::format("{}[{}]", array->toString(), index->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::ArrayIndexing; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || array->anyOf(pred) || index->anyOf(pred);
+    }
 };
-}
+} // namespace AST
