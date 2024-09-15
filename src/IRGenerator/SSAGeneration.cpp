@@ -1,18 +1,38 @@
 #include "SSAGeneration.h"
 #include "../Parser/AST.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <vector>
 
 void SSAGenerator::writeVariable(std::string_view var, const llvm::BasicBlock* block, llvm::Value* value) {
     currentDef[var][block] = value;
 }
 
+llvm::Value* SSAGenerator::reduceTrivialPhi(llvm::PHINode* phi) {
+    llvm::Value* uniqueVal = phi->hasConstantValue();
+    if (!uniqueVal) {
+        return phi;
+    }
+
+    std::vector<llvm::Value*> users;
+    for (auto* user : phi->users()) {
+        users.push_back(user);
+    }
+    phi->replaceAllUsesWith(uniqueVal);
+    for (auto* user : users) {
+        if (llvm::isa<llvm::PHINode>(user)) {
+            reduceTrivialPhi(llvm::cast<llvm::PHINode>(user));
+        }
+    }
+    return uniqueVal;
+}
+
 llvm::Value* SSAGenerator::addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block) {
     for (auto* pred : llvm::predecessors(block)) {
         phi->addIncoming(readVariable(var, pred), pred);
     }
-    // TODO: reduce phi
-    return phi;
+
+    return reduceTrivialPhi(phi);
 }
 
 void SSAGenerator::sealBlock(llvm::BasicBlock* block) {
@@ -193,11 +213,56 @@ void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
             throw std::runtime_error("Not implemented");
         }
     }
+    codegenBlock(currCFG->posterior.at(0).get());
 }
 
-void SSAGenerator::codegenReturnSt(const AST::Expression* ret) {
-    if (ret) {
-        builder->CreateRet(codegenExpression(*ret));
+bool lastInstrInBlockIsTerminator(const llvm::BasicBlock* block) {
+    return block->size() != 0 && block->rbegin()->isTerminator();
+}
+
+void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
+    auto* conditionValue = codegenExpression(*ifBlock->extraInfo[0]);
+    auto* conditionValueNeq0 = builder->CreateICmpNE(
+        conditionValue, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "ifCondition");
+    auto* thenBranchBlock = createNewBasicBlock(currFunc, "thenBranch");
+    llvm::BasicBlock* elseBranchBlock = nullptr;
+    if (ifBlock->posterior[1]) {
+        std::cout << "Else exists" << std::endl;
+        elseBranchBlock = createNewBasicBlock(currFunc, "elseBranch");
+        builder->CreateCondBr(conditionValueNeq0, thenBranchBlock, elseBranchBlock);
+    }
+
+    auto* postIfBlock = createNewBasicBlock(currFunc, "postIf");
+    if (!elseBranchBlock) {
+        std::cout << "No Else exists" << std::endl;
+        builder->CreateCondBr(conditionValueNeq0, thenBranchBlock, postIfBlock);
+    }
+
+    switchToBlock(thenBranchBlock);
+    codegenBlock(ifBlock->posterior[0].get());
+    if (!lastInstrInBlockIsTerminator(currBlock))
+        builder->CreateBr(postIfBlock);
+    sealBlock(thenBranchBlock);
+
+    if (elseBranchBlock) {
+        switchToBlock(elseBranchBlock);
+        codegenBlock(ifBlock->posterior[1].get());
+        if (!lastInstrInBlockIsTerminator(currBlock))
+            builder->CreateBr(postIfBlock);
+        sealBlock(elseBranchBlock);
+    }
+
+    if (llvm::pred_size(postIfBlock) == 0) {
+        llvm::DeleteDeadBlock(postIfBlock);
+    } else {
+        switchToBlock(postIfBlock);
+        codegenBlock(ifBlock->posterior[2].get());
+    }
+}
+
+void SSAGenerator::codegenReturnSt(const AST::Expression* retVal) {
+    if (retVal) {
+        builder->CreateRet(codegenExpression(*retVal));
     } else {
         builder->CreateRetVoid();
     }
@@ -212,12 +277,14 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
         break;
     case CFG::BlockType::Normal:
         codegenStatementSeq(currCFG);
-        codegenBlock(currCFG->posterior.at(0).get());
         break;
     case CFG::BlockType::FunctionEpilogue:
         break;
     case CFG::BlockType::Return:
         codegenReturnSt(currCFG->extraInfo.at(0));
+        break;
+    case CFG::BlockType::If:
+        codegenIf(currCFG);
         break;
     default:
         throw std::runtime_error("Not implemented block type");
@@ -266,9 +333,13 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
     codegenBlock(prelude);
     sealBlock(entryBlock);
 
-    // add empty ret if it is not there already
-    if (currBlock->size() != 0) {
-        if (!currBlock->rbegin()->isTerminator()) {
+    if (!CFG::doesFunctionHaveNonVoidReturnType(prelude)) {
+        // add empty ret if it is not there already
+        if (currBlock->size() != 0) {
+            if (!currBlock->rbegin()->isTerminator()) {
+                builder->CreateRetVoid();
+            }
+        } else {
             builder->CreateRetVoid();
         }
     }

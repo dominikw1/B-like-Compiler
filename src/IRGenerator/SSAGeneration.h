@@ -37,6 +37,7 @@ class SSAGenerator {
     llvm::Value* readVariableRecursive(std::string_view var, llvm::BasicBlock* block);
     llvm::Value* readVariable(std::string_view var, llvm::BasicBlock* block);
     llvm::Value* readFromPtrIfAlloca(llvm::Value* v);
+    llvm::Value* reduceTrivialPhi(llvm::PHINode* phi);
 
     llvm::BasicBlock* createNewBasicBlock(llvm::Function* parentFunction, std::string_view name);
     void switchToBlock(llvm::BasicBlock* newBlock);
@@ -46,6 +47,7 @@ class SSAGenerator {
     void codegenExprStatement(const AST::ExpressionStatement& statement);
     void codegenReturnSt(const AST::Expression* returnNode);
     void codegenAssignment(const AST::Assignment& assignmentStatement);
+    void codegenIf(const CFG::BasicBlock* ifBlock);
 
     llvm::Value* codegenBinaryOp(const AST::Expression& expr);
     llvm::Value* codegenUnaryOp(const AST::Expression& expr);

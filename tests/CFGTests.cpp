@@ -21,6 +21,14 @@ auto program =
             x = x + 3;
         } 
 
+        ifElseTest(x) {
+            if (x < -5)
+                return;
+            else
+                x = x+1;
+            x = x + 3;
+        } 
+
         gauss(x) {
             register res = -0;
             while (x > 0) {
@@ -35,9 +43,10 @@ TEST(CFGTests, CFSContainsRightFunctions) {
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{generateCFG(ast)};
-    ASSERT_EQ(cfg.functions.size(), 4);
+    ASSERT_EQ(cfg.functions.size(), 5);
     ASSERT_TRUE(cfg.functions.contains("gauss"));
     ASSERT_TRUE(cfg.functions.contains("ifTest"));
+    ASSERT_TRUE(cfg.functions.contains("ifElseTest"));
     ASSERT_TRUE(cfg.functions.contains("callTest"));
     ASSERT_TRUE(cfg.functions.contains("bFunc"));
 }
@@ -71,6 +80,24 @@ TEST(CFGTests, IfWithoutElseWorks) {
     auto& thenB = *ifBlcok.posterior.at(0);
     auto& postIfB = *ifBlcok.posterior.at(2);
     ASSERT_EQ(thenB.type, BlockType::Return);
+    ASSERT_EQ(postIfB.type, BlockType::Normal);
+}
+
+TEST(CFGTests, ifWithElseWorks) {
+    auto lexed{scan(program)};
+    auto ast{parse(lexed)};
+    auto cfg{generateCFG(ast)};
+    auto& ifTest = cfg.functions.at("ifElseTest");
+    ASSERT_EQ(ifTest.type, BlockType::FunctionPrologue);
+    auto& ifBlcok = *ifTest.posterior.at(0);
+    ASSERT_EQ(ifBlcok.type, BlockType::If);
+    ASSERT_EQ(ifBlcok.posterior.size(), 3);
+    ASSERT_NE(ifBlcok.posterior[1], nullptr);
+    auto& thenB = *ifBlcok.posterior.at(0);
+    auto& elseB = *ifBlcok.posterior.at(1);
+    auto& postIfB = *ifBlcok.posterior.at(2);
+    ASSERT_EQ(thenB.type, BlockType::Return);
+    ASSERT_EQ(elseB.type, BlockType::Normal);
     ASSERT_EQ(postIfB.type, BlockType::Normal);
 }
 
