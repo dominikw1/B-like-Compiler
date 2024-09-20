@@ -26,4 +26,32 @@ TEST(IRGenTests, complexArith) { VERIFY_VALID("main(a) {return 2+1*5515/(2*5)-2*
 TEST(IRGenTests, negation) { VERIFY_VALID("main(a) {return -a;}"); }
 TEST(IRGenTests, lotsOfParentheses) { VERIFY_VALID("main(a) {return -((((a)))+2);}"); }
 TEST(IRGenTests, autoLocalVar) { VERIFY_VALID("main(a) {auto i = 1; return a+i;}"); }
-TEST(IRGenTests, simpleIf) { VERIFY_VALID("main(a) {if(a) {return a;} else {return 0;}}"); }
+TEST(IRGenTests, simpleIfElse) { VERIFY_VALID("main(a) {if(a) {return a;} else {return 0;}}"); }
+TEST(IRGenTests, simpleIf) { VERIFY_VALID("main(a) {if(a) {return a;} return 4;}"); }
+TEST(IRGenTests, simpleIfUsingAutoVar) { VERIFY_VALID("main(a) {auto b = 2; if(b) {return a;} return 4;}"); }
+TEST(IRGenTests, simpleIfUsingParameter) { VERIFY_VALID("main(a) {auto b = 2; if(b) {return b;} return 4;}"); }
+TEST(IRGenTests, simpleIfPartialReturn) {
+    VERIFY_VALID("main(a) {auto b = 2; if(b) {return b;} else {b = 4;} return b;}");
+}
+TEST(IRGenTests, simpleIfPartialReturnInElse) {
+    VERIFY_VALID("main(a) {auto b = 2; if(b) {b=5;} else {return 4+b;} return b;}");
+}
+TEST(IRGenTests, nestedIf) { VERIFY_VALID("main(a) {auto b = 2; if(b) {if(a){return b;}} return 2;}"); }
+TEST(IRGenTests, nestedIfWithElse) {
+    VERIFY_VALID("main(a) {auto b = 2; if(b) {if(a){return b;}else {b=4;}} return 2;}");
+}
+TEST(IRGenTests, veryNestedIf) {
+    VERIFY_VALID("main(a) {auto b = 2; if(b) "
+                 "{if(a){if(a+1)if(a+2)if(a*5)if(a+b)if(b)if(10000*a)if(1)if(a*100+2)if(b)return b;}else {b=4;}} "
+                 "return 2;}");
+}
+
+TEST(IRGenTests, variableDeclInIf) {
+    VERIFY_VALID(
+        R"(
+    main(a) {
+        if(a){
+            auto c = 1;
+        }
+    })");
+}

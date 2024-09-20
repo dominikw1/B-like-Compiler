@@ -36,11 +36,27 @@ constexpr auto websiteProgram = R"(
     undef() { return; }
 )";
 
+constexpr auto testProgram =
+    R"(
+    main(a) {
+        if(a){
+            auto c = 1;
+        }
+    })";
+
+#include "llvm/Bitcode/BitcodeWriter.h"
+
 int main() {
 
-    auto lexed{scan(websiteProgram)};
+    auto lexed{scan(testProgram)};
     auto ast{parse(lexed)};
     auto cfg{CFG::generateCFG(ast)};
     auto ir{generateIR(cfg)};
+
+    std::error_code EC;
+    llvm::raw_fd_ostream OS("module", EC);
+    WriteBitcodeToFile(*ir.module, OS);
+    OS.flush();
+
     return 0;
 }

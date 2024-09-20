@@ -29,9 +29,8 @@ llvm::Value* SSAGenerator::reduceTrivialPhi(llvm::PHINode* phi) {
 
 llvm::Value* SSAGenerator::addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block) {
     for (auto* pred : llvm::predecessors(block)) {
-        phi->addIncoming(readVariable(var, pred), pred);
+        phi->addIncoming(readFromPtrIfAlloca(readVariable(var, pred)), pred);
     }
-
     return reduceTrivialPhi(phi);
 }
 
@@ -68,8 +67,12 @@ llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::Bas
 }
 
 llvm::Value* SSAGenerator::readVariable(std::string_view var, llvm::BasicBlock* block) {
-    if (currentDef[var].contains(block))
+    std::cout << "Reading " << var << " from block " << std::endl;
+    block->dump();
+    if (currentDef[var].contains(block)) {
+        std::cout << "Immediate success" << std::endl;
         return currentDef[var][block];
+    }
     return readVariableRecursive(var, block);
 }
 
@@ -180,10 +183,7 @@ void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement)
         // TODO: limit this to only auto vars
         // if (assignmentStatement.modifyer.value().type == TokenType::Auto) {
         assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
-        auto& entryBlock = currFunc->getEntryBlock();
-        switchToBlock(&entryBlock);
         auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
-        switchToBlock(currBlock);
         writeVariable(varName, currBlock, allocaInst);
 
         //}
@@ -234,18 +234,24 @@ void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
 
     auto* postIfBlock = createNewBasicBlock(currFunc, "postIf");
     if (!elseBranchBlock) {
-        std::cout << "No Else exists" << std::endl;
         builder->CreateCondBr(conditionValueNeq0, thenBranchBlock, postIfBlock);
     }
 
     switchToBlock(thenBranchBlock);
+    sealBlock(thenBranchBlock);
+    std::cout << "bfore thenBlock" << std::endl;
+    currFunc->dump();
     codegenBlock(ifBlock->posterior[0].get());
+    std::cout << "\nafter thenBlock" << std::endl;
+    currFunc->dump();
+
     if (!lastInstrInBlockIsTerminator(currBlock))
         builder->CreateBr(postIfBlock);
     sealBlock(thenBranchBlock);
 
     if (elseBranchBlock) {
         switchToBlock(elseBranchBlock);
+        sealBlock(elseBranchBlock);
         codegenBlock(ifBlock->posterior[1].get());
         if (!lastInstrInBlockIsTerminator(currBlock))
             builder->CreateBr(postIfBlock);
@@ -256,6 +262,7 @@ void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
         llvm::DeleteDeadBlock(postIfBlock);
     } else {
         switchToBlock(postIfBlock);
+        sealBlock(postIfBlock);
         codegenBlock(ifBlock->posterior[2].get());
     }
 }
@@ -330,8 +337,8 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
 
     builder->SetInsertPoint(currBlock);
 
-    codegenBlock(prelude);
     sealBlock(entryBlock);
+    codegenBlock(prelude);
 
     if (!CFG::doesFunctionHaveNonVoidReturnType(prelude)) {
         // add empty ret if it is not there already
@@ -344,6 +351,7 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
         }
     }
 
+    currFunc->dump();
     if (llvm::verifyFunction(*currFunc, &llvm::errs())) {
         throw std::runtime_error("Invalid function");
     }
