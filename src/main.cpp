@@ -38,16 +38,17 @@ constexpr auto websiteProgram = R"(
 
 constexpr auto testProgram =
     R"(
-    main(a) {
-        if(a){
-            auto c = 1;
+    main(a, b) { 
+        auto c = a&&b;
+        if(c){
+           return b;
         }
+        return 0;
     })";
 
 #include "llvm/Bitcode/BitcodeWriter.h"
 
 int main() {
-
     auto lexed{scan(testProgram)};
     auto ast{parse(lexed)};
     auto cfg{CFG::generateCFG(ast)};

@@ -55,3 +55,43 @@ TEST(IRGenTests, variableDeclInIf) {
         }
     })");
 }
+
+TEST(IRGenTests, variableDeclInIfWithUsage) {
+    VERIFY_VALID(
+        R"(
+    main(a) {
+        if(a){
+            auto c = 1;
+            if(a+1) {
+                if(c) {
+                    return c;
+                }  
+                return a;
+            }
+        }
+        return 0;
+    })");
+}
+
+TEST(IRGenTests, ifWithComplexCondition) {
+    VERIFY_VALID(
+        R"(
+    main(a, b) { 
+        if(a&&b){
+           return b;
+        }
+        return 0;
+    })");
+}
+
+TEST(IRGenTests, ifVeryComplexCondition) {
+    VERIFY_VALID(
+        R"(
+    main(a, b) {
+        auto c = 2; 
+        if(a&&b&&c&&(a+c)){
+           return b;
+        }
+        return 0;
+    })");
+}

@@ -16,11 +16,13 @@ llvm::Value* SSAGenerator::reduceTrivialPhi(llvm::PHINode* phi) {
 
     std::vector<llvm::Value*> users;
     for (auto* user : phi->users()) {
-        users.push_back(user);
+        if (user != phi)
+            users.push_back(user);
     }
-    phi->replaceAllUsesWith(uniqueVal);
+    auto phiIt = phi->getIterator();
+    llvm::ReplaceInstWithValue(phiIt, uniqueVal);
     for (auto* user : users) {
-        if (llvm::isa<llvm::PHINode>(user)) {
+        if (user && llvm::isa<llvm::PHINode>(user)) {
             reduceTrivialPhi(llvm::cast<llvm::PHINode>(user));
         }
     }
@@ -29,7 +31,7 @@ llvm::Value* SSAGenerator::reduceTrivialPhi(llvm::PHINode* phi) {
 
 llvm::Value* SSAGenerator::addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block) {
     for (auto* pred : llvm::predecessors(block)) {
-        phi->addIncoming(readFromPtrIfAlloca(readVariable(var, pred)), pred);
+        phi->addIncoming(readVariable(var, pred), pred);
     }
     return reduceTrivialPhi(phi);
 }
@@ -52,25 +54,42 @@ llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::Bas
     llvm::Value* val{};
     if (!sealed.contains(block)) {
         // Incomplete CFG
-        val = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), 0);
+        val = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), 0, "incompletePhi");
+        auto* insertPlace = currBlock->getFirstNonPHI();
+        if (insertPlace) {
+            llvm::cast<llvm::Instruction>(val)->insertBefore(insertPlace);
+        } else {
+            builder->Insert(llvm::cast<llvm::Instruction>(val));
+        }
         incompletePhis[block][var] = val;
     } else if (llvm::pred_size(block) == 1) {
+        std::cout << "one pred" << std::endl;
         // Optimize the common case of one predecessor : No phi needed
         val = readVariable(var, *llvm::pred_begin(block));
     } else {
+        std::cout << "new phi" << std::endl;
         auto* phi = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), llvm::pred_size(block));
+        auto* insertPlace = currBlock->getFirstNonPHI();
+        if (insertPlace) {
+            std::cout << "There are instrs here" << std::endl;
+            phi->insertBefore(insertPlace);
+        } else {
+            std::cout << "First instr in block" << std::endl;
+            builder->Insert(phi);
+        }
+        std::cout << "now wriitng var" << std::endl;
         writeVariable(var, block, phi);
+        std::cout << "adding phi operands" << std::endl;
         val = addPhiOperands(var, phi, block);
+        std::cout << "done";
     }
     writeVariable(var, block, val);
     return val;
 }
 
 llvm::Value* SSAGenerator::readVariable(std::string_view var, llvm::BasicBlock* block) {
-    std::cout << "Reading " << var << " from block " << std::endl;
-    block->dump();
+    std::cout << "reading " << var << std::endl;
     if (currentDef[var].contains(block)) {
-        std::cout << "Immediate success" << std::endl;
         return currentDef[var][block];
     }
     return readVariableRecursive(var, block);
@@ -90,8 +109,9 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
     auto* resultBlock = createNewBasicBlock(currFunc, "boolExprResult");
 
     llvm::Value* leftVal = codegenExpression(left);
+    llvm::Value* leftVali64 = builder->CreateIntCast(leftVal, llvm::Type::getInt64Ty(*context), true);
     llvm::Value* leftValBoolean = builder->CreateICmpNE(
-        leftVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
+        leftVali64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
     llvm::Value* branchToFalse = builder->CreateCondBr(leftValBoolean, resultBlock, falseBlock);
 
     auto* trueBlock = currBlock;
@@ -99,17 +119,19 @@ llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const 
     sealBlock(falseBlock);
 
     llvm::Value* rightVal = codegenExpression(right);
-    llvm::Value* rightValBoolean =
-        builder->CreateICmpNE(rightVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0));
+    auto* blockAfterRightValGeneration = currBlock;
+    llvm::Value* rightVali64 = builder->CreateIntCast(rightVal, llvm::Type::getInt64Ty(*context), true);
+    llvm::Value* rightValBoolean = builder->CreateICmpNE(
+        rightVali64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0), "rightValBoolean");
 
     llvm::Value* branchToResult = builder->CreateBr(resultBlock);
     switchToBlock(resultBlock);
     sealBlock(resultBlock);
 
     auto exprResult = llvm::PHINode::Create(llvm::Type::getInt1Ty(*context), 2, "boolExprResultNode");
-    exprResult->insertInto(resultBlock, resultBlock->begin());
+    builder->Insert(exprResult);
     exprResult->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context), 1), trueBlock);
-    exprResult->addIncoming(rightValBoolean, falseBlock);
+    exprResult->addIncoming(rightValBoolean, blockAfterRightValGeneration);
     return exprResult;
 }
 
@@ -159,7 +181,7 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
     case AST::ExpressionType::BinaryOperator:
         return codegenBinaryOp(expr);
     case AST::ExpressionType::Name:
-        return readFromPtrIfAlloca(readVariable(static_cast<const AST::Name&>(expr).literal, currBlock));
+        return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
     case AST::ExpressionType::Parenthesised:
         return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner);
     case AST::ExpressionType::PrefixOperator:
@@ -179,17 +201,18 @@ void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement)
     }
 
     auto varName = static_cast<const AST::Name&>(*assignmentStatement.left).literal;
+    auto* expr = codegenExpression(*assignmentStatement.right);
+
     if (assignmentStatement.modifyer) {
         // TODO: limit this to only auto vars
         // if (assignmentStatement.modifyer.value().type == TokenType::Auto) {
         assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
         auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
-        writeVariable(varName, currBlock, allocaInst);
-
+        builder->CreateStore(expr, allocaInst);
         //}
     }
-    // ig writing is always using stores?
-    builder->CreateStore(codegenExpression(*assignmentStatement.right), readVariable(varName, currBlock));
+    // maybe store as well?
+    writeVariable(varName, currBlock, expr);
 }
 
 void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
@@ -222,12 +245,13 @@ bool lastInstrInBlockIsTerminator(const llvm::BasicBlock* block) {
 
 void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
     auto* conditionValue = codegenExpression(*ifBlock->extraInfo[0]);
+    auto* conditionValueAsI64 =
+        builder->CreateIntCast(conditionValue, llvm::Type::getInt64Ty(*context), true, "castToI64");
     auto* conditionValueNeq0 = builder->CreateICmpNE(
-        conditionValue, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "ifCondition");
+        conditionValueAsI64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "ifCondition");
     auto* thenBranchBlock = createNewBasicBlock(currFunc, "thenBranch");
     llvm::BasicBlock* elseBranchBlock = nullptr;
     if (ifBlock->posterior[1]) {
-        std::cout << "Else exists" << std::endl;
         elseBranchBlock = createNewBasicBlock(currFunc, "elseBranch");
         builder->CreateCondBr(conditionValueNeq0, thenBranchBlock, elseBranchBlock);
     }
@@ -239,11 +263,7 @@ void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
 
     switchToBlock(thenBranchBlock);
     sealBlock(thenBranchBlock);
-    std::cout << "bfore thenBlock" << std::endl;
-    currFunc->dump();
     codegenBlock(ifBlock->posterior[0].get());
-    std::cout << "\nafter thenBlock" << std::endl;
-    currFunc->dump();
 
     if (!lastInstrInBlockIsTerminator(currBlock))
         builder->CreateBr(postIfBlock);
