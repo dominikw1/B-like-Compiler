@@ -89,8 +89,32 @@ TEST(IRGenTests, ifVeryComplexCondition) {
         R"(
     main(a, b) {
         auto c = 2; 
-        if(a&&b&&c&&(a+c)){
+        if(a&&b&&c&&(a+c)&&(b*c+ a) && (a&&0)){
            return b;
+        }
+        return 0;
+    })");
+}
+
+
+TEST(IRGenTests, ifElseComplexConditionsWithVarAllocation) {
+    VERIFY_VALID(
+        R"(
+    main(a, b) {
+        auto c = 2; 
+        if(a&&b&&c&&(a+c)&&(b*c+ a) && (a&&0)){
+           auto d = 2;
+           return d;
+        } else {
+            auto d = 5;
+            if(d&&a&&(d*a)) {
+                auto e=4;
+                d=6;
+                e=1;
+                if(e) {
+                return 0;
+                }
+            }
         }
         return 0;
     })");

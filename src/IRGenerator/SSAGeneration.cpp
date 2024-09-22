@@ -308,7 +308,9 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
     case CFG::BlockType::FunctionEpilogue:
         break;
     case CFG::BlockType::Return:
-        codegenReturnSt(currCFG->extraInfo.at(0));
+        if (!currBlock->rbegin()->isTerminator()) // this is conservatively added at too many places, if we already have
+                                                  // a terminator then just ignore
+            codegenReturnSt(currCFG->extraInfo.at(0));
         break;
     case CFG::BlockType::If:
         codegenIf(currCFG);
