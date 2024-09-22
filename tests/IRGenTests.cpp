@@ -96,7 +96,6 @@ TEST(IRGenTests, ifVeryComplexCondition) {
     })");
 }
 
-
 TEST(IRGenTests, ifElseComplexConditionsWithVarAllocation) {
     VERIFY_VALID(
         R"(
@@ -118,4 +117,12 @@ TEST(IRGenTests, ifElseComplexConditionsWithVarAllocation) {
         }
         return 0;
     })");
+}
+
+TEST(IRGenTests, trivialWhile) {
+    VERIFY_VALID("main(a) {auto a = 1; while(a){return 0;} return 2;}")
+}
+
+TEST(IRGenTests, trivialWhileChangingCondition) {
+    VERIFY_VALID("main(a) {auto a = 1; while(a){a = 0;} return 2;}")
 }

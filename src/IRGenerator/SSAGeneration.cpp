@@ -52,14 +52,16 @@ llvm::Value* SSAGenerator::readFromPtrIfAlloca(llvm::Value* v) {
 
 llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::BasicBlock* block) {
     llvm::Value* val{};
+    std::cout << "reading recursively" << var << std::endl;
     if (!sealed.contains(block)) {
+        std::cout<<"incomplete"<<std::endl;
         // Incomplete CFG
         val = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), 0, "incompletePhi");
         auto* insertPlace = currBlock->getFirstNonPHI();
         if (insertPlace) {
             llvm::cast<llvm::Instruction>(val)->insertBefore(insertPlace);
         } else {
-            builder->Insert(llvm::cast<llvm::Instruction>(val));
+            builder->Insert(val);
         }
         incompletePhis[block][var] = val;
     } else if (llvm::pred_size(block) == 1) {
@@ -243,6 +245,35 @@ bool lastInstrInBlockIsTerminator(const llvm::BasicBlock* block) {
     return block->size() != 0 && block->rbegin()->isTerminator();
 }
 
+void SSAGenerator::codegenWhile(const CFG::BasicBlock* whileBlockCFG) {
+    auto conditionBlock = createNewBasicBlock(currFunc, "conditionBlock");
+    auto whileBlock = createNewBasicBlock(currFunc, "whileBlock");
+    auto postWhileBlock = createNewBasicBlock(currFunc, "postWhileBlock");
+    builder->CreateBr(conditionBlock);
+
+    switchToBlock(conditionBlock);
+    auto* conditionValue = codegenExpression(*whileBlockCFG->extraInfo[0]);
+    auto* conditionValueAsI64 =
+        builder->CreateIntCast(conditionValue, llvm::Type::getInt64Ty(*context), true, "castToI64");
+    auto* conditionValueNeq0 = builder->CreateICmpNE(
+        conditionValueAsI64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "whileCondition");
+
+    builder->CreateCondBr(conditionValueNeq0, whileBlock, postWhileBlock);
+
+    switchToBlock(whileBlock);
+    sealBlock(whileBlock);
+    codegenBlock(whileBlockCFG->posterior[0].get());
+
+    if (!lastInstrInBlockIsTerminator(currBlock))
+        builder->CreateBr(conditionBlock);
+
+    sealBlock(conditionBlock);
+
+    switchToBlock(postWhileBlock);
+    sealBlock(postWhileBlock);
+    codegenBlock(whileBlockCFG->posterior[1].get());
+}
+
 void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
     auto* conditionValue = codegenExpression(*ifBlock->extraInfo[0]);
     auto* conditionValueAsI64 =
@@ -267,7 +298,6 @@ void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
 
     if (!lastInstrInBlockIsTerminator(currBlock))
         builder->CreateBr(postIfBlock);
-    sealBlock(thenBranchBlock);
 
     if (elseBranchBlock) {
         switchToBlock(elseBranchBlock);
@@ -314,6 +344,9 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
         break;
     case CFG::BlockType::If:
         codegenIf(currCFG);
+        break;
+    case CFG::BlockType::While:
+        codegenWhile(currCFG);
         break;
     default:
         throw std::runtime_error("Not implemented block type");

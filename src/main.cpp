@@ -38,13 +38,8 @@ constexpr auto websiteProgram = R"(
 
 constexpr auto testProgram =
     R"(
-    main(a, b) { 
-        auto c = a&&b;
-        if(c){
-           return b;
-        }
-        return 0;
-    })";
+  main(a) {auto a = 1; while(a){a = 0;} return 2;}
+    )";
 
 #include "llvm/Bitcode/BitcodeWriter.h"
 

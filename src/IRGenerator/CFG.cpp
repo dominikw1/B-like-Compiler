@@ -33,8 +33,9 @@ std::shared_ptr<BasicBlock> generateForWhile(const Expression& curr, std::shared
     post.push_back(std::move(posterior));
     auto whileBlock = std::make_shared<BasicBlock>(BlockType::While, std::move(post),
                                                    std::vector<const Expression*>{whileSt.condition.get()});
-    whileBlock->posterior.at(0)->replaceByIf(whileBlock,
-                                             [](const BasicBlock& b) { return b.type == BlockType::FunctionEpilogue; });
+    // whileBlock->posterior.at(0)->replaceByIf(whileBlock,
+    //                                        [](const BasicBlock& b) { return b.type == BlockType::FunctionEpilogue;
+    //                                        });
     std::for_each(whileBlock->posterior.begin(), whileBlock->posterior.end(),
                   [&whileBlock](auto& post) { post->predecessors.push_back(whileBlock.get()); });
     return whileBlock;
