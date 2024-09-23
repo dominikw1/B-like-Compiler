@@ -153,8 +153,8 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
         break; // handled later
     }
 
-    auto* left = codegenExpression(*binExp.operand1);
-    auto* right = codegenExpression(*binExp.operand2);
+    auto* left = builder->CreateIntCast(codegenExpression(*binExp.operand1), llvm::Type::getInt64Ty(*context), true);
+    auto* right = builder->CreateIntCast(codegenExpression(*binExp.operand2), llvm::Type::getInt64Ty(*context), true);
     switch (binExp.type) {
     case TokenType::And_Bit:
         return builder->CreateAnd(left, right);
@@ -166,6 +166,10 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
         return builder->CreateMul(left, right);
     case TokenType::Slash:
         return builder->CreateSDiv(left, right);
+    case TokenType::Equals:
+        return builder->CreateICmpEQ(left, right);
+    case TokenType::Uneqal:
+        return builder->CreateICmpNE(left, right);
     default:
         throw std::runtime_error("Unimplemented binop for codegen");
     }
@@ -203,7 +207,6 @@ void SSAGenerator::codegenExprStatement(const AST::ExpressionStatement& statemen
 }
 
 void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement) {
-    // TODO lets ignore the possibility of array indexing for now
     if (assignmentStatement.left->getType() != AST::ExpressionType::Name) {
         return;
     }
