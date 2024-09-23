@@ -158,6 +158,14 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
     switch (binExp.type) {
     case TokenType::And_Bit:
         return builder->CreateAnd(left, right);
+    case TokenType::Or_Bit:
+        return builder->CreateOr(left, right);
+    case TokenType::Xor:
+        return builder->CreateXor(left, right);
+    case TokenType::Bitshift_Left:
+        return builder->CreateShl(left, right);
+    case TokenType::Bitshift_Right:
+        return builder->CreateAShr(left, right);
     case TokenType::Plus:
         return builder->CreateAdd(left, right);
     case TokenType::Minus:
@@ -170,6 +178,14 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
         return builder->CreateICmpEQ(left, right);
     case TokenType::Uneqal:
         return builder->CreateICmpNE(left, right);
+    case TokenType::Larger:
+        return builder->CreateICmpSGT(left, right);
+    case TokenType::Larger_Equal:
+        return builder->CreateICmpSGE(left, right);
+    case TokenType::Smaller:
+        return builder->CreateICmpSLT(left, right);
+    case TokenType::Smaller_Equal:
+        return builder->CreateICmpSLE(left, right);
     default:
         throw std::runtime_error("Unimplemented binop for codegen");
     }
@@ -177,10 +193,14 @@ llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
 
 llvm::Value* SSAGenerator::codegenUnaryOp(const AST::Expression& expr) {
     auto& unExpr = static_cast<const AST::PrefixOperator&>(expr);
+    auto* val = builder->CreateIntCast(codegenExpression(*unExpr.operand), llvm::Type::getInt64Ty(*context), true);
     switch (unExpr.type) {
     case TokenType::Minus:
-        return builder->CreateSub(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0),
-                                  codegenExpression(*unExpr.operand));
+        return builder->CreateSub(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0), val);
+    case TokenType::Tilde:
+        return builder->CreateNot(val);
+    case TokenType::Exclamation_Mark:
+        return builder->CreateICmpEQ(val, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0));
     default:
         throw std::runtime_error("unimplemented unop");
     }
@@ -214,13 +234,12 @@ void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement)
     auto varName = static_cast<const AST::Name&>(*assignmentStatement.left).literal;
     auto* expr = codegenExpression(*assignmentStatement.right);
 
-    if (assignmentStatement.modifyer) {
-        if (assignmentStatement.modifyer.value().type == TokenType::Auto) {
-            assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
-            auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
-            builder->CreateStore(expr, allocaInst);
-        }
+    if (assignmentStatement.modifyer && assignmentStatement.modifyer.value().type == TokenType::Auto) {
+        assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
+        auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
+        builder->CreateStore(expr, allocaInst);
     }
+
     // maybe store as well?
     writeVariable(varName, currBlock, expr);
 }

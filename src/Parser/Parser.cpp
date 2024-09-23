@@ -288,7 +288,7 @@ void registerAllSubParsers() {
     subParsers[TokenType::Identifier] = {&parseIdentifier, nullptr, Precedence::PREC_NONE};
 
     subParsers[TokenType::Minus] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS};
-    subParsers[TokenType::Plus] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS};
+    subParsers[TokenType::Plus] = {nullptr, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS};
     subParsers[TokenType::Star] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
     subParsers[TokenType::Slash] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
     subParsers[TokenType::Mod] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
