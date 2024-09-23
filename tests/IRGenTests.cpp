@@ -119,10 +119,15 @@ TEST(IRGenTests, ifElseComplexConditionsWithVarAllocation) {
     })");
 }
 
-TEST(IRGenTests, trivialWhile) {
-    VERIFY_VALID("main(a) {auto a = 1; while(a){return 0;} return 2;}")
+TEST(IRGenTests, trivialWhile){VERIFY_VALID("main(a) {auto a = 1; while(a){return 0;} return 2;}")}
+
+TEST(IRGenTests, trivialWhileChangingCondition){VERIFY_VALID("main(a) {auto a = 1; while(a){a = 0;} return 2;}")}
+
+TEST(IRGenTests, complexWhileConditionImmutable) {
+    VERIFY_VALID("main(b) {auto a = 1; while((a+2)&&(a-1)&&(a)&&(a&&a)){auto c= 2;} return 2;}");
 }
 
-TEST(IRGenTests, trivialWhileChangingCondition) {
-    VERIFY_VALID("main(a) {auto a = 1; while(a){a = 0;} return 2;}")
+TEST(IRGenTests, complexWhileConditionMutable) {
+    VERIFY_VALID("main(b) {auto a = 1; auto d = 4; while((a+2)&&(a-1)&&(a)&&(d+a)&&(a*d)&&(a&&a)){auto c= 2; d = c; a "
+                 "= d*2;} return 2;}");
 }

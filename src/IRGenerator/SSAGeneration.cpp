@@ -54,16 +54,20 @@ llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::Bas
     llvm::Value* val{};
     std::cout << "reading recursively" << var << std::endl;
     if (!sealed.contains(block)) {
-        std::cout<<"incomplete"<<std::endl;
+        std::cout << "incomplete" << std::endl;
         // Incomplete CFG
         val = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), 0, "incompletePhi");
-        auto* insertPlace = currBlock->getFirstNonPHI();
+        auto* insertPlace = block->getFirstNonPHI();
         if (insertPlace) {
             llvm::cast<llvm::Instruction>(val)->insertBefore(insertPlace);
         } else {
+            builder->SetInsertPoint(block);
             builder->Insert(val);
+            builder->SetInsertPoint(currBlock);
         }
         incompletePhis[block][var] = val;
+        std::cout << "Added proxy phi in block for " << var << std::endl;
+        currBlock->dump();
     } else if (llvm::pred_size(block) == 1) {
         std::cout << "one pred" << std::endl;
         // Optimize the common case of one predecessor : No phi needed
@@ -71,13 +75,15 @@ llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::Bas
     } else {
         std::cout << "new phi" << std::endl;
         auto* phi = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), llvm::pred_size(block));
-        auto* insertPlace = currBlock->getFirstNonPHI();
+        auto* insertPlace = block->getFirstNonPHI();
         if (insertPlace) {
             std::cout << "There are instrs here" << std::endl;
             phi->insertBefore(insertPlace);
         } else {
             std::cout << "First instr in block" << std::endl;
+            builder->SetInsertPoint(block);
             builder->Insert(phi);
+            builder->SetInsertPoint(currBlock);
         }
         std::cout << "now wriitng var" << std::endl;
         writeVariable(var, block, phi);

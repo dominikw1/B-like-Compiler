@@ -110,5 +110,5 @@ TEST(CFGTests, whileWorks) {
     auto& whileBlcok = *whileTest.posterior.at(0)->posterior.at(0);
     ASSERT_EQ(whileBlcok.type, BlockType::While);
     ASSERT_EQ(whileBlcok.posterior.size(), 2);
-  //  ASSERT_EQ(whileBlcok.posterior.at(0)->posterior.at(0).get(), &whileBlcok);
+    //  ASSERT_EQ(whileBlcok.posterior.at(0)->posterior.at(0).get(), &whileBlcok);
 }
