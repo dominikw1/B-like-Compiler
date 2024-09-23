@@ -131,3 +131,37 @@ TEST(IRGenTests, complexWhileConditionMutable) {
     VERIFY_VALID("main(b) {auto a = 1; auto d = 4; while((a+2)&&(a-1)&&(a)&&(d+a)&&(a*d)&&(a&&a)){auto c= 2; d = c; a "
                  "= d*2;} return 2;}");
 }
+
+TEST(IRGenTests, whileAndIfCombined) {
+    VERIFY_VALID(
+        R"(
+            main(a,b) {
+                auto c = 1;
+                while(c && b) {
+                    if(b+1) {
+                        c = c + a;
+                    }
+                }
+            }
+    )");
+}
+
+TEST(IRGenTests, mutableParam) {
+    VERIFY_VALID(
+        R"(
+            main(a,b) {
+                b = 2*a;
+                return b;
+            }
+    )");
+}
+
+TEST(IRGenTests, registerVar) {
+    VERIFY_VALID(
+        R"(
+            main() {
+                register c = 1;
+                return c*5;
+            }
+    )");
+}

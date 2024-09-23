@@ -212,12 +212,11 @@ void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement)
     auto* expr = codegenExpression(*assignmentStatement.right);
 
     if (assignmentStatement.modifyer) {
-        // TODO: limit this to only auto vars
-        // if (assignmentStatement.modifyer.value().type == TokenType::Auto) {
-        assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
-        auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
-        builder->CreateStore(expr, allocaInst);
-        //}
+        if (assignmentStatement.modifyer.value().type == TokenType::Auto) {
+            assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
+            auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
+            builder->CreateStore(expr, allocaInst);
+        }
     }
     // maybe store as well?
     writeVariable(varName, currBlock, expr);
