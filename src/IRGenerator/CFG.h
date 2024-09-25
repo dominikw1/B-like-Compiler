@@ -24,7 +24,7 @@ struct BasicBlock {
 };
 
 struct CFG {
-    std::unordered_map<std::string_view, BasicBlock> functions;
+    std::vector<std::pair<std::string_view, BasicBlock>> functions;
 };
 
 // Lifetime of AST must be at least as long as that of CFG

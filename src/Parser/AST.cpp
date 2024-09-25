@@ -338,6 +338,7 @@ void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     auto argCnt = 0;
     if (args) {
         args.value()->doAnalysis(scope, depth);
+        assert(NODE_IS(args.value(), Parenthesised));
         auto& list = NODE_AS_REF(args.value(), Parenthesised);
         if (NODE_IS(list.inner, CommaList))
             argCnt = NODE_AS_REF(list.inner, CommaList).getNumInList();

@@ -157,7 +157,7 @@ CFG generateCFG(const AST::AST& ast) {
         if (!function.isVoid) {
             b.extraInfo.push_back(nullptr); // this is an indicator for non-void => i64 ret type
         }
-        cfg.functions.emplace(std::pair{NODE_AS_REF(function.name, Name).literal, std::move(b)});
+        cfg.functions.emplace_back(NODE_AS_REF(function.name, Name).literal, std::move(b));
     }
     return cfg;
 }

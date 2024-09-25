@@ -8,6 +8,7 @@
 #define VERIFY_VALID(program)                                                                                          \
     do {                                                                                                               \
         auto ast = parse(scan(program));                                                                               \
+        ast.analyze();                                                                                             \
         auto cfg = CFG::generateCFG(ast);                                                                              \
         auto ir = generateIR(cfg);                                                                                     \
         ir.module->dump();                                                                                             \
@@ -162,6 +163,44 @@ TEST(IRGenTests, registerVar) {
             main() {
                 register c = 1;
                 return c*5;
+            }
+    )");
+}
+
+TEST(IRGenTests, moreOperations) {
+    VERIFY_VALID(
+        R"(
+            main(a) {
+                auto c = 1;
+                c = 1 << 6;
+                c = c >> 2;
+                c = (c|a) & 9999;
+                c = 1 > 3;
+                c = c ^ (c+2);
+                return c != 5;
+            }
+    )");
+}
+
+TEST(IRGenTests, trivialFunctionCall) {
+    VERIFY_VALID(
+        R"(
+            foo() {
+            }
+            main() {
+               foo();
+            }
+    )");
+}
+
+TEST(IRGenTests, functionCallWithParam) {
+    VERIFY_VALID(
+        R"(
+            foo(a) {
+            return a;
+            }
+            main(a) {
+               foo(a);
             }
     )");
 }

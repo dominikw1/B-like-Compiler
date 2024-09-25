@@ -129,7 +129,7 @@ constexpr std::optional<Token> lexNextToken(auto& curr, auto end) {
     case '<':
         if (isNextChar(curr, end, '='))
             return Token{incrementCurr(curr, 2), TokenType::Smaller_Equal};
-        if (isNextChar(curr, end, '>'))
+        if (isNextChar(curr, end, '<'))
             return Token{incrementCurr(curr, 2), TokenType::Bitshift_Left};
         return Token{incrementCurr(curr, 1), TokenType::Smaller};
     case '^':

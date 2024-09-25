@@ -54,6 +54,7 @@ class SSAGenerator {
     llvm::Value* codegenUnaryOp(const AST::Expression& expr);
     llvm::Value* codegenAndLogical(const AST::Expression& left, const AST::Expression& right);
     llvm::Value* codegenAndBit(const AST::Expression& left, const AST::Expression& right);
+    llvm::Value* codegenFunctionCall(const AST::Expression& expr);
 
   public:
     SSAGenerator()
@@ -68,6 +69,7 @@ class SSAGenerator {
 
 inline IntermediateRepresentation generateIR(CFG::CFG& cfg) {
     SSAGenerator ssaGen{};
+
     for (auto& [name, prelude] : cfg.functions) {
         ssaGen.codegenFunction(name, &prelude);
     }

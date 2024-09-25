@@ -39,23 +39,36 @@ auto program =
         }
         )";
 
+BasicBlock getFunction(auto& map, std::string nameWanted) {
+    auto it = std::find_if(map.begin(), map.end(), [&nameWanted](auto& p) {
+        auto& [name, cf] = p;
+        return name == nameWanted;
+    });
+    if (it != map.end()) {
+        auto& [name, cf] = *it;
+        return cf;
+    }
+    throw std::runtime_error("no function of this type");
+}
+
 TEST(CFGTests, CFSContainsRightFunctions) {
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{generateCFG(ast)};
     ASSERT_EQ(cfg.functions.size(), 5);
-    ASSERT_TRUE(cfg.functions.contains("gauss"));
-    ASSERT_TRUE(cfg.functions.contains("ifTest"));
-    ASSERT_TRUE(cfg.functions.contains("ifElseTest"));
-    ASSERT_TRUE(cfg.functions.contains("callTest"));
-    ASSERT_TRUE(cfg.functions.contains("bFunc"));
+    ASSERT_NO_THROW(getFunction(cfg.functions, "gauss"));
+    ASSERT_NO_THROW(getFunction(cfg.functions, "ifTest"));
+    ASSERT_NO_THROW(getFunction(cfg.functions, "ifElseTest"));
+    ASSERT_NO_THROW(getFunction(cfg.functions, "callTest"));
+    ASSERT_NO_THROW(getFunction(cfg.functions, "bFunc"));
+    ASSERT_THROW(getFunction(cfg.functions, "skfkfskaksaffksa"), std::runtime_error);
 }
 
 TEST(CFGTests, EmptyFunctionGeneratesOnlyProAndEpilogue) {
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{generateCFG(ast)};
-    auto& bFunc = cfg.functions.at("bFunc");
+    auto bFunc = getFunction(cfg.functions, "bFunc");
     ASSERT_EQ(bFunc.type, BlockType::FunctionPrologue);
     ASSERT_EQ(bFunc.posterior.size(), 1);
     ASSERT_EQ(bFunc.extraInfo.size(), 1);
@@ -71,7 +84,7 @@ TEST(CFGTests, IfWithoutElseWorks) {
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{generateCFG(ast)};
-    auto& ifTest = cfg.functions.at("ifTest");
+    auto ifTest = getFunction(cfg.functions, "ifTest");
     ASSERT_EQ(ifTest.type, BlockType::FunctionPrologue);
     auto& ifBlcok = *ifTest.posterior.at(0);
     ASSERT_EQ(ifBlcok.type, BlockType::If);
@@ -87,7 +100,7 @@ TEST(CFGTests, ifWithElseWorks) {
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{generateCFG(ast)};
-    auto& ifTest = cfg.functions.at("ifElseTest");
+    auto ifTest = getFunction(cfg.functions, "ifElseTest");
     ASSERT_EQ(ifTest.type, BlockType::FunctionPrologue);
     auto& ifBlcok = *ifTest.posterior.at(0);
     ASSERT_EQ(ifBlcok.type, BlockType::If);
@@ -105,7 +118,7 @@ TEST(CFGTests, whileWorks) {
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{generateCFG(ast)};
-    auto& whileTest = cfg.functions.at("gauss");
+    auto whileTest = getFunction(cfg.functions, "gauss");
     ASSERT_EQ(whileTest.type, BlockType::FunctionPrologue);
     auto& whileBlcok = *whileTest.posterior.at(0)->posterior.at(0);
     ASSERT_EQ(whileBlcok.type, BlockType::While);

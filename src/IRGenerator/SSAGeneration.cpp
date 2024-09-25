@@ -75,6 +75,7 @@ llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::Bas
     } else {
         std::cout << "new phi" << std::endl;
         auto* phi = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), llvm::pred_size(block));
+        // TODO: check if splitting would not be smarter. Can this approach cause problems?
         auto* insertPlace = block->getFirstNonPHI();
         if (insertPlace) {
             std::cout << "There are instrs here" << std::endl;
@@ -206,6 +207,35 @@ llvm::Value* SSAGenerator::codegenUnaryOp(const AST::Expression& expr) {
     }
 }
 
+llvm::Value* SSAGenerator::codegenFunctionCall(const AST::Expression& expr) {
+    const auto& fCallExpr = static_cast<const AST::FunctionCall&>(expr);
+    const auto& name = static_cast<const AST::Name&>(*fCallExpr.name).literal;
+    std::vector<llvm::Value*> args{};
+    if (fCallExpr.args) {
+        const auto* argNode = static_cast<const AST::Parenthesised&>(*fCallExpr.args.value()).inner.get();
+
+        while (argNode) {
+            if (argNode->getType() == AST::ExpressionType::CommaList) {
+                const auto& list = static_cast<const AST::CommaList&>(*argNode);
+                args.push_back(codegenExpression(*list.left));
+                argNode = list.right.get();
+            } else {
+                args.push_back(codegenExpression(*argNode));
+                break;
+            }
+        }
+    }
+    for (const auto& f : *module) {
+        f.dump();
+    }
+
+    auto* F = module->getFunction(name);
+    if (!F)
+        throw std::runtime_error("Failing to get function from module at at codegenFunctionCall!!\n");
+
+    return builder->CreateCall(F, args);
+}
+
 llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
     switch (expr.getType()) {
     case AST::ExpressionType::Value:
@@ -218,6 +248,8 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
         return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner);
     case AST::ExpressionType::PrefixOperator:
         return codegenUnaryOp(expr);
+    case AST::ExpressionType::FunctionCall:
+        return codegenFunctionCall(expr);
     default:
         throw std::runtime_error(std::format("Not implemented expr {}", expr.toString()));
     }
@@ -346,7 +378,7 @@ void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
 
 void SSAGenerator::codegenReturnSt(const AST::Expression* retVal) {
     if (retVal) {
-        builder->CreateRet(codegenExpression(*retVal));
+        builder->CreateRet(builder->CreateIntCast(codegenExpression(*retVal), llvm::Type::getInt64Ty(*context), true));
     } else {
         builder->CreateRetVoid();
     }
