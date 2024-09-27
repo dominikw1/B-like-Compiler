@@ -67,7 +67,7 @@ llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::Bas
         }
         incompletePhis[block][var] = val;
         std::cout << "Added proxy phi in block for " << var << std::endl;
-        currBlock->dump();
+        //  currBlock->dump();
     } else if (llvm::pred_size(block) == 1) {
         std::cout << "one pred" << std::endl;
         // Optimize the common case of one predecessor : No phi needed
@@ -224,9 +224,6 @@ llvm::Value* SSAGenerator::codegenFunctionCall(const AST::Expression& expr) {
                 break;
             }
         }
-    }
-    for (const auto& f : *module) {
-        f.dump();
     }
 
     auto* F = module->getFunction(name);
@@ -397,7 +394,8 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
     case CFG::BlockType::FunctionEpilogue:
         break;
     case CFG::BlockType::Return:
-        if (currBlock->empty() || !currBlock->rbegin()->isTerminator()) // this is conservatively added at too many places, if we already have
+        if (currBlock->empty() ||
+            !currBlock->rbegin()->isTerminator()) // this is conservatively added at too many places, if we already have
                                                   // a terminator then just ignore
             codegenReturnSt(currCFG->extraInfo.at(0));
         break;
@@ -435,11 +433,6 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
                                 parameters, false);
     llvm::FunctionCallee funcCallee = this->module->getOrInsertFunction(name, type);
     currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
-    if (prelude->posterior.size() == 1 && prelude->posterior[0]->type == CFG::BlockType::FunctionEpilogue) {
-        // empty function
-        return;
-    }
-
     auto* entryBlock = createNewBasicBlock(currFunc, "entry");
     currBlock = entryBlock;
 
@@ -465,8 +458,49 @@ void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock*
         }
     }
 
-    currFunc->dump();
+    // currFunc->dump();
     if (llvm::verifyFunction(*currFunc, &llvm::errs())) {
         throw std::runtime_error("Invalid function");
+    }
+}
+
+void SSAGenerator::addPrintToMain() {
+    for (auto& function : *module) {
+        if (function.getName() == "main") {
+
+            llvm::Type* intType = llvm::Type::getInt32Ty(*context);
+
+            // Declare C standard library printf
+            std::vector<llvm::Type*> printfArgsTypes(
+                {llvm::PointerType::get(*context, 0), llvm::Type::getInt32Ty(*context)});
+
+            llvm::FunctionType* printfType = llvm::FunctionType::get(intType, printfArgsTypes, true);
+
+            auto printfFunc = module->getOrInsertFunction("printf", printfType);
+
+            llvm::Value* str = builder->CreateGlobalStringPtr("%d\n", "printf_format_str");
+
+            builder->SetInsertPoint(&*function.back().rbegin());
+
+            for (auto& bb : function) {
+                for (auto& instr : bb) {
+                    if (auto* retInstr = llvm::dyn_cast<llvm::ReturnInst>(&instr)) {
+                        std::cout << "found a ret in main" << std::endl;
+                        auto* returnValue = retInstr->getReturnValue();
+                        std::vector<llvm::Value*> argsV{};
+                        if (!returnValue) {
+                            argsV = {str, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), 0, true)};
+                        } else {
+                            auto* printRet =
+                                builder->CreateIntCast(returnValue, llvm::Type::getInt32Ty(*context), true);
+                            argsV = {str, printRet};
+                        }
+                        builder->CreateCall(printfFunc, argsV, "callPrintf");
+                    }
+                }
+            }
+
+            return;
+        }
     }
 }

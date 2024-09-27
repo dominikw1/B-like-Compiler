@@ -6,3 +6,8 @@ configure:
 
 clean:
 	rm -rf build
+
+run:
+	./build/src/Compiler
+noTest:
+	cmake --build build -j16

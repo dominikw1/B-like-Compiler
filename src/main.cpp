@@ -39,16 +39,23 @@ constexpr auto websiteProgram = R"(
 constexpr auto testProgram =
     R"(
     mul(a,b){
-    return 2;
+    return a*b;
     }
 
   main() {return mul(5,3);}
     )";
 
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include <fstream>
 
-int main() {
-    auto lexed{scan(testProgram)};
+int main(int argc, char* argv[]) {
+    std::string program = testProgram;
+    if (argc > 1) {
+        std::ifstream input{std::string(argv[1])};
+        program = std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    }
+
+    auto lexed{scan(program)};
     auto ast{parse(lexed)};
     auto cfg{CFG::generateCFG(ast)};
     auto ir{generateIR(cfg)};

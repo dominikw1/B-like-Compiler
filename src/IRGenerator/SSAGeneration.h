@@ -65,6 +65,7 @@ class SSAGenerator {
     IntermediateRepresentation extractResult() {
         return IntermediateRepresentation{std::move(context), std::move(module)};
     }
+    void addPrintToMain();
 };
 
 inline IntermediateRepresentation generateIR(CFG::CFG& cfg) {
@@ -73,5 +74,8 @@ inline IntermediateRepresentation generateIR(CFG::CFG& cfg) {
     for (auto& [name, prelude] : cfg.functions) {
         ssaGen.codegenFunction(name, &prelude);
     }
+
+    ssaGen.addPrintToMain();
+
     return ssaGen.extractResult();
 }
