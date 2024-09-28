@@ -226,6 +226,7 @@ Node Parser::parseExpression() {
 std::vector<Node> Parser::parseStatements() {
     std::vector<Node> statements;
     for (auto statement = parseStatement(); statement; statement = parseStatement()) {
+      //  std::cout<<"Parsed " << statement->toString()<<std::endl;
         statements.push_back(std::move(statement));
     }
     return statements;
