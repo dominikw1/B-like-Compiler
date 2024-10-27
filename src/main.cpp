@@ -57,6 +57,7 @@ int main(int argc, char* argv[]) {
 
     auto lexed{scan(program)};
     auto ast{parse(lexed)};
+    ast.analyze();
     auto cfg{CFG::generateCFG(ast)};
     auto ir{generateIR(cfg)};
 

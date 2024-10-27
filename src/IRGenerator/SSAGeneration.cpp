@@ -211,8 +211,8 @@ llvm::Value* SSAGenerator::codegenFunctionCall(const AST::Expression& expr) {
     const auto& fCallExpr = static_cast<const AST::FunctionCall&>(expr);
     const auto& name = static_cast<const AST::Name&>(*fCallExpr.name).literal;
     std::vector<llvm::Value*> args{};
-    if (fCallExpr.args) {
-        const auto* argNode = static_cast<const AST::Parenthesised&>(*fCallExpr.args.value()).inner.get();
+    if (fCallExpr.args && static_cast<const AST::Parenthesised&>(*fCallExpr.args.value()).inner) {
+        const auto* argNode = static_cast<const AST::Parenthesised&>(*fCallExpr.args.value()).inner.value().get();
 
         while (argNode) {
             if (argNode->getType() == AST::ExpressionType::CommaList) {
@@ -242,7 +242,11 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
     case AST::ExpressionType::Name:
         return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
     case AST::ExpressionType::Parenthesised:
-        return codegenExpression(*static_cast<const AST::Parenthesised&>(expr).inner);
+        if (auto& inner = static_cast<const AST::Parenthesised&>(expr).inner) {
+            return codegenExpression(*inner.value());
+        } else {
+            throw std::runtime_error("No parentheses contents...");
+        }
     case AST::ExpressionType::PrefixOperator:
         return codegenUnaryOp(expr);
     case AST::ExpressionType::FunctionCall:
@@ -412,10 +416,10 @@ void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
 
 std::vector<std::string_view> extractParameterNamesFromFunction(const CFG::BasicBlock* prelude) {
     auto paramNode = prelude->extraInfo[0];
-    if (paramNode == nullptr)
+    if (paramNode == nullptr || !static_cast<const AST::Parenthesised*>(paramNode)->inner)
         return {};
     // if its not a nullptr it is a parenthesised
-    paramNode = static_cast<const AST::Parenthesised*>(paramNode)->inner.get();
+    paramNode = static_cast<const AST::Parenthesised*>(paramNode)->inner.value().get();
     if (paramNode->getType() == AST::ExpressionType::Name) {
         return {static_cast<const AST::Name*>(paramNode)->literal};
     }

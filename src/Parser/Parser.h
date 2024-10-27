@@ -27,12 +27,12 @@ class Parser {
     std::span<const Token> tokens;
 
   public:
-    AST::Node parseExpression();
-    AST::Node parseStatement();
+    std::optional<AST::Node> parseExpression();
+    std::optional<AST::Node> parseStatement();
     std::vector<AST::Node> parseStatements();
     AST::Node parseFunction();
     std::vector<AST::Node> parseFunctions();
-    AST::Node parseExprWithPrecedence(Precedence prec);
+    std::optional<AST::Node> parseExprWithPrecedence(Precedence prec);
     std::optional<Token> consumeNextToken();
     std::optional<Token> lookaheadToken(std::uint32_t lookahead);
     bool isNextTokenOfType(TokenType type);

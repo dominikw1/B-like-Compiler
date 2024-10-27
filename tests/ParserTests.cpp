@@ -120,6 +120,12 @@ TEST(ParserTests, ParserParsesEmptyReturnCorrectly) {
     ASSERT_FALSE(returnSt.what);
 }
 
+TEST(ParserTests, ParserFailsWithDuplicateFunctionParamNames) {
+    auto program = "fn(a,b,a){}";
+    auto ast = parseProgram(program);
+    ASSERT_ANY_THROW(ast.analyze());
+}
+
 TEST(ParserTests, ParserParsesNonEmptyReturnCorrectly) {
     auto program = WRAPPED_IN_MAIN("return 5*1+2;");
     auto ast = parseProgram(program);
@@ -158,7 +164,7 @@ TEST(ParserTests, ParserFunctionCall) {
     ASSERT_TRUE(call2.args);
 
     auto& argListWithParens = *ASSERT_AND_CONVERT(call2.args.value(), Parenthesised);
-    auto& argList = NODE_AS_REF(argListWithParens.inner, CommaList);
+    auto& argList = NODE_AS_REF(argListWithParens.inner.value(), CommaList);
     auto& a = *ASSERT_AND_CONVERT(argList.left, Name);
     auto& bSide = *ASSERT_AND_CONVERT(argList.right, CommaList);
     auto& b = *ASSERT_AND_CONVERT(bSide.left, Name);
@@ -179,7 +185,7 @@ TEST(ParserTests, ParserFunctionCall) {
     ASSERT_TRUE(f2.args);
     ASSERT_TRUE(NODE_IS(f2.args.value(), Parenthesised));
     auto& f2argListPs = NODE_AS_REF(f2.args.value(), Parenthesised);
-    auto& f2argList = *ASSERT_AND_CONVERT(f2argListPs.inner, CommaList);
+    auto& f2argList = *ASSERT_AND_CONVERT(f2argListPs.inner.value(), CommaList);
     auto& f2a = *ASSERT_AND_CONVERT(f2argList.left, Name);
     auto& f2b = *ASSERT_AND_CONVERT(f2argList.right, Name);
     ASSERT_EQ(f2a.literal, "a");
@@ -269,3 +275,15 @@ auto websiteProgram = R"(
 )";
 
 TEST(ParserTests, ParserDoesNotThrowWithExampleFromWebsite) { ASSERT_NO_THROW(parseProgram(websiteProgram)); }
+
+void parseAndAnalyseProgram(std::string_view program) {
+    auto lexed = scan(program);
+    ParsingInternals::Parser p{lexed};
+    auto AST{p.parse()};
+    AST.analyze();
+}
+
+TEST(ParserTests, ParserDoesNotThrowWithVariousExamples) {
+    ASSERT_NO_THROW(parseAndAnalyseProgram("f(a, b) { g(a)[0] = b; }"));
+    ASSERT_ANY_THROW(parseAndAnalyseProgram("f(){//}"));
+}

@@ -29,7 +29,7 @@ enum class ExpressionType {
     Parenthesised,
 };
 
-#define NODE_AS_PTR(node, TYPE) (static_cast<const TYPE*>(node.get()))
+#define NODE_AS_PTR(node, TYPE) (dynamic_cast<const TYPE*>(node.get()))
 #define NODE_AS_REF(node, TYPE) (*NODE_AS_PTR(node, TYPE))
 #define NODE_IS(node, TYPE) (node->getType() == ExpressionType::TYPE)
 #define CAST_NODE_IF_TYPE(node, TYPE) (NODE_IS(node, TYPE) ? NODE_AS_PTR(node, TYPE) : (TYPE*)nullptr);
@@ -297,12 +297,14 @@ struct CommaList : Expression {
 };
 
 struct Parenthesised : Expression {
-    Node inner;
-    Parenthesised(Node inner);
-    std::string toString() const override { return std::format("( {} )", inner->toString()); }
+    std::optional<Node> inner;
+    Parenthesised(std::optional<Node> inner);
+    std::string toString() const override { return std::format("( {} )", inner ? inner.value()->toString() : ""); }
     constexpr ExpressionType getType() const override { return ExpressionType::Parenthesised; }
     void doAnalysis(SymbolScope scope, std::uint32_t depth) const;
-    bool anyOf(std::function<bool(const Expression*)>& pred) const override { return pred(this) || inner->anyOf(pred); }
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || (inner ? inner.value()->anyOf(pred) : false);
+    }
 };
 
 struct ArrayIndexing : Expression {

@@ -12,6 +12,7 @@
             }                                                                                                          \
         }                                                                                                              \
     } while (0);
+
 namespace AST {
 void AST::analyze() const {
     SymbolScope scope{};
@@ -21,13 +22,14 @@ void AST::analyze() const {
             throw std::runtime_error("Redefinition of function");
         }
         std::uint32_t argCnt = [&]() -> std::uint32_t {
-            if (!funAsFunc.argList) {
+            if (!funAsFunc.argList || !NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner) {
                 return 0;
             }
-            if (!NODE_IS(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner, CommaList)) {
+            if (!NODE_IS(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner.value(), CommaList)) {
                 return 1;
             }
-            return NODE_AS_REF(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner, CommaList).getNumInList();
+            return NODE_AS_REF(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner.value(), CommaList)
+                .getNumInList();
         }();
         scope.functions[std::string(NODE_AS_REF(funAsFunc.name, Name).literal)] = FunctionSymbol{.numArgs = argCnt};
         func->doAnalysis(scope, 0);
@@ -128,24 +130,21 @@ Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
 }
 
 void Assignment::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    auto name = [&]() {
-        if (NODE_IS(left, Name)) {
-            return std::string(NODE_AS_REF(left, Name).literal);
+    if (auto name = NODE_IS(left, Name) ? std::optional{std::string(NODE_AS_REF(left, Name).literal)} : std::nullopt) {
+        if (scope.functions.contains(*name)) {
+            throw std::runtime_error("Cannot declare variable with same name as function");
         }
-        auto& arr = NODE_AS_REF(left, ArrayIndexing);
-        return std::string(NODE_AS_REF(arr.array, Name).literal);
-    }();
-    if (scope.functions.contains(name)) {
-        throw std::runtime_error("Cannot declare variable with same name as function");
-    }
-    if (scope.variables.contains(name)) {
-        auto& var = scope.variables.at(name);
-        if (var.depthDecl == depth && modifyer) {
-            throw std::runtime_error(
-                std::format("Cannot redeclare variable {} of same name at same scope depth", name));
+        if (scope.variables.contains(*name)) {
+            auto& var = scope.variables.at(*name);
+            if (var.depthDecl == depth && modifyer) {
+                throw std::runtime_error(
+                    std::format("Cannot redeclare variable {} of same name at same scope depth", *name));
+            }
         }
+    } else {
+        left->doAnalysis(scope, depth);
     }
-    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(right, scope);
+    right->doAnalysis(std::move(scope), depth);
 }
 
 Scope::Scope(std::vector<Node> scoped) : scoped{std::move(scoped)} {
@@ -245,8 +244,8 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
 }
 
 void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    if (argList) {
-        const auto& parenthesised = NODE_AS_REF(argList.value(), Parenthesised).inner;
+    if (argList && NODE_AS_REF(argList.value(), Parenthesised).inner) {
+        const auto& parenthesised = *NODE_AS_REF(argList.value(), Parenthesised).inner;
         if (NODE_IS(parenthesised, Name)) {
             const auto& parName = NODE_AS_REF(parenthesised, Name);
             ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(parenthesised, scope);
@@ -260,17 +259,19 @@ void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
                 throw std::runtime_error("Parameters must be non-function identifiers");
             }
             const auto& names = commaList.getAllNamesOnTopLevel();
-            std::unordered_set<std::string_view> uniquenessChecker;
+            std::unordered_set<std::string> uniquenessChecker;
+            //  std::cout << "doing analysis" << std::endl;
             for (auto& n : names) {
-                uniquenessChecker.insert(n);
+                uniquenessChecker.insert(std::string(n));
                 // use the iteration to do proper bookkeeping
                 scope.variables[std::string(n)] = {.depthDecl = depth + 1, .type = VariableType::Parameter};
             }
             if (uniquenessChecker.size() != names.size()) {
-                throw std::runtime_error("Parameter names msut be unique");
+                throw std::runtime_error("Parameter names must be unique");
             }
         }
     }
+
     for (auto& st : body) {
         st->doAnalysis(scope, depth);
         if (NODE_IS(st, Assignment)) {
@@ -331,23 +332,31 @@ FunctionCall::FunctionCall(Node name, std::optional<Node> args) : name{std::move
 }
 
 void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    name->doAnalysis(scope, depth);
-    if (!scope.functions.contains(std::string(NODE_AS_REF(name, Name).literal))) {
-        throw std::runtime_error("Only functions can be called");
-    }
+    // TODO: fix this?
+    // name->doAnalysis(scope, depth);
+
+    // if (!scope.functions.contains(std::string(NODE_AS_REF(name, Name).literal))) {
+    //   throw std::runtime_error("Only functions can be called");
+    //}
+
     auto argCnt = 0;
     if (args) {
         args.value()->doAnalysis(scope, depth);
         assert(NODE_IS(args.value(), Parenthesised));
         auto& list = NODE_AS_REF(args.value(), Parenthesised);
-        if (NODE_IS(list.inner, CommaList))
-            argCnt = NODE_AS_REF(list.inner, CommaList).getNumInList();
-        else
-            argCnt = 1;
+        if (list.inner) {
+            if (NODE_IS(list.inner.value(), CommaList))
+                argCnt = NODE_AS_REF(list.inner.value(), CommaList).getNumInList();
+            else
+                argCnt = 1;
+        }
     }
-    if (argCnt != scope.functions.at(std::string(NODE_AS_REF(name, Name).literal)).numArgs) {
-        throw std::runtime_error(
-            std::format("Number of arguments of {} does not match declaration", NODE_AS_REF(name, Name).literal));
+    // TODO as above
+    if (scope.functions.contains(std::string(NODE_AS_REF(name, Name).literal))) {
+        if (argCnt != scope.functions.at(std::string(NODE_AS_REF(name, Name).literal)).numArgs) {
+            throw std::runtime_error(
+                std::format("Number of arguments of {} does not match declaration", NODE_AS_REF(name, Name).literal));
+        }
     }
 }
 
@@ -363,13 +372,14 @@ void CommaList::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(right, scope);
     right->doAnalysis(std::move(scope), depth);
 }
-Parenthesised::Parenthesised(Node inner) : inner{std::move(inner)} {
+Parenthesised::Parenthesised(std::optional<Node> inner) : inner{std::move(inner)} {
     if (!this->inner) {
         throw std::runtime_error("Empty parenthesised expression.");
     }
 }
 void Parenthesised::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    inner->doAnalysis(std::move(scope), depth);
+    if (inner)
+        inner.value()->doAnalysis(std::move(scope), depth);
 }
 
 ArrayIndexing::ArrayIndexing(Node array, Node index) : array{std::move(array)}, index{std::move(index)} {

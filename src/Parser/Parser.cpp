@@ -83,7 +83,11 @@ static Node parseParenGroup(Parser& parser, Token consumed) {
 
 [[nodiscard]]
 static Node parseCommaList(Parser& parser, Node prev, Token _token, Precedence prec) {
-    return std::make_unique<CommaList>(std::move(prev), parser.parseExprWithPrecedence(prec));
+    auto right = parser.parseExprWithPrecedence(prec);
+    if (!right) {
+        throw std::runtime_error("comma list incomplete");
+    }
+    return std::make_unique<CommaList>(std::move(prev), std::move(right.value()));
 }
 
 [[nodiscard]]
@@ -93,12 +97,20 @@ static Node parseIdentifier(Parser& parser, Token consumed) {
 
 [[nodiscard]]
 static Node parsePrefixOperator(Parser& parser, Token consumed) {
-    return std::make_unique<PrefixOperator>(consumed.type, parser.parseExprWithPrecedence(PREC_UNARY_OP));
+    auto exp = parser.parseExprWithPrecedence(PREC_UNARY_OP);
+    if (!exp) {
+        throw std::runtime_error("Incomplete unary op");
+    }
+    return std::make_unique<PrefixOperator>(consumed.type, std::move(exp.value()));
 }
 
 [[nodiscard]]
 static Node parseBinaryOperator(Parser& parser, Node prev, Token consumed, Precedence currPrec) {
-    return std::make_unique<BinaryOperator>(consumed.type, std::move(prev), parser.parseExprWithPrecedence(currPrec));
+    auto exp = parser.parseExprWithPrecedence(currPrec);
+    if (!exp) {
+        throw std::runtime_error("Incomplete binary op");
+    }
+    return std::make_unique<BinaryOperator>(consumed.type, std::move(prev), std::move(exp.value()));
 }
 /*
 [[nodiscard]]
@@ -117,18 +129,27 @@ static Node parseAssignment(Parser& parser, Token consumed) {
     // std::cout << "In correct function\n";
     auto left = parser.parseExprWithPrecedence(
         Precedence::PREC_LOGIC_OR); // to make sure we are not accidentally picking up the whole assignemt
+    if (!left) {
+        throw std::runtime_error("Failed to parse left side of assignment");
+    }
     parser.consumeTokenOfType(TokenType::Assignment);
     auto right = parser.parseExpression();
+    if (!right) {
+        throw std::runtime_error("Failed to parse right side of assignment");
+    }
     parser.consumeTokenOfType(TokenType::Semicolon);
-    return std::make_unique<Assignment>(consumed, std::move(left), std::move(right));
+    return std::make_unique<Assignment>(consumed, std::move(left.value()), std::move(right.value()));
 }
 
 [[nodiscard]]
 static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence prec) {
     // std::cout << "in correct method" << std::endl;
     auto right = parser.parseExpression();
+    if (!right) {
+        throw std::runtime_error("Failed to parse right side of assignment");
+    }
     parser.consumeTokenOfType(TokenType::Semicolon);
-    return std::make_unique<Assignment>(std::move(prev), std::move(right));
+    return std::make_unique<Assignment>(std::move(prev), std::move(right.value()));
 }
 
 [[nodiscard]]
@@ -149,8 +170,14 @@ static Node parseFunctionCall(Parser& parser, Node prev, Token consumed, Precede
 static Node parseIf(Parser& parser, Token consumed) {
     parser.consumeTokenOfType(TokenType::Left_Parenthesis);
     auto cond = parser.parseExpression();
+    if (!cond) {
+        throw std::runtime_error("Failed to parse condition of if");
+    }
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
     auto thenBranch = parser.parseStatement();
+    if (!thenBranch) {
+        throw std::runtime_error("Failed to parse then branch of if");
+    }
 
     auto elseBranch = [&parser]() -> std::optional<Node> {
         if (parser.isNextTokenOfType(TokenType::Else)) {
@@ -160,23 +187,32 @@ static Node parseIf(Parser& parser, Token consumed) {
         return std::nullopt;
     }();
 
-    return std::make_unique<If>(std::move(cond), std::move(thenBranch), std::move(elseBranch));
+    return std::make_unique<If>(std::move(cond.value()), std::move(thenBranch.value()), std::move(elseBranch));
 }
 
 [[nodiscard]]
 static Node parseWhile(Parser& parser, Token consumed) {
     parser.consumeTokenOfType(TokenType::Left_Parenthesis);
     auto cond = parser.parseExpression();
+    if (!cond) {
+        throw std::runtime_error("Failed to parse while condition");
+    }
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
     auto body = parser.parseStatement();
-    return std::make_unique<While>(std::move(cond), std::move(body));
+    if (!body) {
+        throw std::runtime_error("Failed to parse while body");
+    }
+    return std::make_unique<While>(std::move(cond.value()), std::move(body.value()));
 }
 
 [[nodiscard]]
 static Node parseArrayIndexing(Parser& parser, Node prev, Token _consumed, Precedence prec) {
     auto index = parser.parseExpression(); // not using prec cause otherwise nothing will be found
+    if (!index) {
+        throw std::runtime_error("No index supplied for array indexing");
+    }
     parser.consumeTokenOfType(TokenType::Right_Bracket);
-    return std::make_unique<ArrayIndexing>(std::move(prev), std::move(index));
+    return std::make_unique<ArrayIndexing>(std::move(prev), std::move(index.value()));
 }
 
 [[nodiscard]]
@@ -186,15 +222,18 @@ static Node parseReturn(Parser& parser, Token consumed) {
         return std::make_unique<Return>();
     }
     auto what = parser.parseExpression();
+    if (!what) {
+        throw std::runtime_error("Failed to parse return expression");
+    }
     parser.consumeTokenOfType(TokenType::Semicolon);
-    return std::make_unique<Return>(std::move(what));
+    return std::make_unique<Return>(std::move(what.value()));
 }
 
 [[nodiscard]]
-Node Parser::parseExprWithPrecedence(Precedence prec) {
+std::optional<Node> Parser::parseExprWithPrecedence(Precedence prec) {
     auto maybeToken = consumeNextToken();
     if (!maybeToken) {
-        return nullptr;
+        return std::nullopt;
     }
     Token token = *maybeToken;
 
@@ -218,7 +257,7 @@ Node Parser::parseExprWithPrecedence(Precedence prec) {
 }
 
 [[nodiscard]]
-Node Parser::parseExpression() {
+std::optional<Node> Parser::parseExpression() {
     return parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
 };
 
@@ -226,25 +265,25 @@ Node Parser::parseExpression() {
 std::vector<Node> Parser::parseStatements() {
     std::vector<Node> statements;
     for (auto statement = parseStatement(); statement; statement = parseStatement()) {
-      //  std::cout<<"Parsed " << statement->toString()<<std::endl;
-        statements.push_back(std::move(statement));
+        //  std::cout<<"Parsed " << statement->toString()<<std::endl;
+        statements.push_back(std::move(*statement));
     }
     return statements;
 }
 
 [[nodiscard]]
-Node Parser::parseStatement() {
+std::optional<Node> Parser::parseStatement() {
     // std::cout << "tryna parse statement" << std::endl;
     if (auto lookahead = lookaheadToken(0); lookahead && lookahead->type == TokenType::Right_Brace) {
-        return nullptr; // end of scope
+        return std::nullopt; // end of scope
     }
     auto expr = parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
     if (!expr)
-        return nullptr;
-    if (expr->isStatement())
+        return std::nullopt;
+    if (expr.value()->isStatement())
         return expr;
     consumeTokenOfType(TokenType::Semicolon);
-    return std::make_unique<ExpressionStatement>(std::move(expr));
+    return std::make_unique<ExpressionStatement>(std::move(expr.value()));
 }
 
 [[nodiscard]]
@@ -266,7 +305,7 @@ std::vector<Node> Parser::parseFunctions() {
     for (auto function = parseFunction(); function; function = parseFunction()) {
         // std::cout << function->toString() << std::endl;
         functions.push_back(std::move(function));
-        //std::cout << functions.back()->toString() << std::endl;
+        // std::cout << functions.back()->toString() << std::endl;
     }
     return functions;
 }
@@ -335,7 +374,7 @@ void registerAllSubParsers() {
 }
 
 AST::AST Parser::parse() {
-    //std::cout << "Starting parsing..." << std::endl;
+    // std::cout << "Starting parsing..." << std::endl;
     registerAllSubParsers();
     auto funcs = parseFunctions();
     if (tokens.size() != 0) {
