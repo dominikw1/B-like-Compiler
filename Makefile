@@ -11,3 +11,7 @@ run:
 	./build/src/Compiler
 noTest:
 	cmake --build build -j16
+
+.PHONY: bc0
+bc0: 
+	rm bc0;	g++ -O0 -g  -std=c++20 bc0.cc src/Parser/Scanner.cpp src/Parser/Parser.cpp src/Parser/AST.cpp -o bc0

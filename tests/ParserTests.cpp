@@ -284,6 +284,10 @@ void parseAndAnalyseProgram(std::string_view program) {
 }
 
 TEST(ParserTests, ParserDoesNotThrowWithVariousExamples) {
-    ASSERT_NO_THROW(parseAndAnalyseProgram("f(a, b) { g(a)[0] = b; }"));
-    ASSERT_ANY_THROW(parseAndAnalyseProgram("f(){//}"));
+    auto err = [&](std::string_view program) { ASSERT_ANY_THROW(parseAndAnalyseProgram(program)); };
+    auto ok = [&](std::string_view program) { ASSERT_NO_THROW(parseAndAnalyseProgram(program)); };
+    ok("f(a, b) { g(a)[0] = b; }");
+    err("f(){//}");
+    err("fn(x) { f(1); f(2, 3); }");
+    ok("f(fn) { fn(fn); }");
 }

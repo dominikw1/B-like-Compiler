@@ -7,9 +7,10 @@
     do {                                                                                                               \
         if (NODE_IS(node, Name)) {                                                                                     \
             auto& lit = NODE_AS_REF(node, Name).literal;                                                               \
-            if (scope.functions.contains(std::string(lit))) {                                                          \
+            if (scope.getFunction(std::string(lit))) {                                                                 \
                 throw std::runtime_error("Function found where variable expected");                                    \
             }                                                                                                          \
+            scope.getOrTransformVariable(lit);                                                                         \
         }                                                                                                              \
     } while (0);
 
@@ -18,7 +19,7 @@ void AST::analyze() const {
     SymbolScope scope{};
     for (auto& func : toplevel) {
         auto& funAsFunc = NODE_AS_REF(func, Function);
-        if (scope.functions.contains(std::string(NODE_AS_REF(funAsFunc.name, Name).literal))) {
+        if (scope.getFunction(std::string(NODE_AS_REF(funAsFunc.name, Name).literal))) {
             throw std::runtime_error("Redefinition of function");
         }
         std::uint32_t argCnt = [&]() -> std::uint32_t {
@@ -32,16 +33,18 @@ void AST::analyze() const {
                 .getNumInList();
         }();
         scope.functions[std::string(NODE_AS_REF(funAsFunc.name, Name).literal)] = FunctionSymbol{.numArgs = argCnt};
-        func->doAnalysis(scope, 0);
+    }
+    for (auto& func : toplevel) {
+        func->doAnalysis(*scope.duplicate(), 0);
     }
 }
 
-void Value::doAnalysis(SymbolScope scope, std::uint32_t depth) const {}
+void Value::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {}
 
-void Name::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    if (scope.functions.count(std::string(literal)) == 0 && scope.variables.contains(std::string(literal)) == 0) {
+void Name::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    if (!scope.symbolExists(literal)) {
         scope.dump();
-        throw std::runtime_error(std::format("Referenced {} not in scope", literal));
+        throw std::runtime_error(std::format("Referenced symbol {} not in scope", literal));
     }
 }
 
@@ -79,16 +82,21 @@ void doCheckForAddressOf(const SymbolScope& scope, const Node& operand) {
         throw std::runtime_error("Operand of address-of operator must be identifier or array indexing expr");
     }());
 
-    if (scope.functions.count(name) == 0) {
-        auto& var = scope.variables.at(name); // must therefore be variable
-        if (var.type == VariableType::Register || var.type == VariableType::Parameter) {
+    if (!scope.getFunction(name)) {
+        if (scope.isUndecidedParameter(name))
+            throw std::runtime_error(std::format("Operand of address-of {} must not be a parameter", name));
+        auto var = scope.getVariable(name); // must therefore be variable
+        if (!var) {
+            throw std::runtime_error("Variable not in scope");
+        }
+        if (var->type == VariableType::Register || var->type == VariableType::Parameter) {
             throw std::runtime_error("Operand of address-of must be neither register variable or parameter");
         }
     }
 }
 
-void PrefixOperator::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    operand->doAnalysis(scope, depth);
+void PrefixOperator::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    operand->doAnalysis(*scope.duplicate(), depth);
     if (type == TokenType::And_Bit) {
         doCheckForAddressOf(scope, operand);
     } else {
@@ -103,16 +111,16 @@ BinaryOperator::BinaryOperator(TokenType type, Node operand1, Node operand2)
     }
 }
 
-void BinaryOperator::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    operand1->doAnalysis(scope, depth);
-    operand2->doAnalysis(scope, depth);
+void BinaryOperator::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    operand1->doAnalysis(*scope.duplicate(), depth);
+    operand2->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(operand1, scope);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(operand2, scope);
 }
 
-void ExpressionStatement::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void ExpressionStatement::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(expression, scope);
-    expression->doAnalysis(std::move(scope), depth);
+    expression->doAnalysis(*scope.duplicate(), depth);
 }
 
 Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
@@ -129,22 +137,21 @@ Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
     }
 }
 
-void Assignment::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void Assignment::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (auto name = NODE_IS(left, Name) ? std::optional{std::string(NODE_AS_REF(left, Name).literal)} : std::nullopt) {
-        if (scope.functions.contains(*name)) {
+        if (scope.getFunction(*name)) {
             throw std::runtime_error("Cannot declare variable with same name as function");
         }
-        if (scope.variables.contains(*name)) {
-            auto& var = scope.variables.at(*name);
-            if (var.depthDecl == depth && modifyer) {
+        if (auto var = scope.getOrTransformVariable(*name); var) {
+            if (var->depthDecl == depth && modifyer) {
                 throw std::runtime_error(
                     std::format("Cannot redeclare variable {} of same name at same scope depth", *name));
             }
         }
     } else {
-        left->doAnalysis(scope, depth);
+        left->doAnalysis(*scope.duplicate(), depth);
     }
-    right->doAnalysis(std::move(scope), depth);
+    right->doAnalysis(*scope.duplicate(), depth);
 }
 
 Scope::Scope(std::vector<Node> scoped) : scoped{std::move(scoped)} {
@@ -153,14 +160,14 @@ Scope::Scope(std::vector<Node> scoped) : scoped{std::move(scoped)} {
     }
 }
 
-void Scope::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void Scope::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     for (auto& scopedStatement : scoped) {
-        scopedStatement->doAnalysis(scope, depth);
+        scopedStatement->doAnalysis(*scope.duplicate(), depth+1);
         if (NODE_IS(scopedStatement, Assignment)) {
             auto& assignment = NODE_AS_REF(scopedStatement, Assignment);
             if (assignment.modifyer) { // no param -> new!
                 scope.variables[std::string(NODE_AS_REF(assignment.left, Name).literal)] = {
-                    .depthDecl = depth,
+                    .depthDecl = depth+1,
                     .type = (assignment.modifyer.value().type == TokenType::Register) ? VariableType::Register
                                                                                       : VariableType::Auto};
             }
@@ -199,12 +206,12 @@ If::If(Node condition, Node thenBranch, std::optional<Node> elseBranch)
     }
 }
 
-void If::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    condition->doAnalysis(scope, depth);
+void If::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    condition->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(condition, scope);
-    thenBranch->doAnalysis(scope, depth + 1);
+    thenBranch->doAnalysis(*scope.duplicate(), depth + 1);
     if (elseBranch) {
-        elseBranch.value()->doAnalysis(scope, depth + 1);
+        elseBranch.value()->doAnalysis(*scope.duplicate(), depth + 1);
     }
 }
 
@@ -243,13 +250,13 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
     isVoid = !hasNonVoidRet; // not hasVoidRet as no return statement is necessay for void funcs
 }
 
-void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (argList && NODE_AS_REF(argList.value(), Parenthesised).inner) {
         const auto& parenthesised = *NODE_AS_REF(argList.value(), Parenthesised).inner;
         if (NODE_IS(parenthesised, Name)) {
             const auto& parName = NODE_AS_REF(parenthesised, Name);
             ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(parenthesised, scope);
-            scope.variables[std::string(parName.literal)] = {.depthDecl = depth + 1, .type = VariableType::Parameter};
+            scope.undecidedParams.insert(std::string(parName.literal));
         } else {
             auto& commaList = NODE_AS_REF(parenthesised, CommaList);
             if (!commaList.assertForAllElems([&](const Node& n) {
@@ -264,7 +271,7 @@ void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
             for (auto& n : names) {
                 uniquenessChecker.insert(std::string(n));
                 // use the iteration to do proper bookkeeping
-                scope.variables[std::string(n)] = {.depthDecl = depth + 1, .type = VariableType::Parameter};
+                scope.undecidedParams.insert(std::string(n));
             }
             if (uniquenessChecker.size() != names.size()) {
                 throw std::runtime_error("Parameter names must be unique");
@@ -273,7 +280,7 @@ void Function::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
     }
 
     for (auto& st : body) {
-        st->doAnalysis(scope, depth);
+        st->doAnalysis(*scope.duplicate(), depth);
         if (NODE_IS(st, Assignment)) {
             auto& assignment = NODE_AS_REF(st, Assignment);
             if (assignment.modifyer) { // no param -> new!
@@ -303,16 +310,16 @@ While::While(Node cond, Node body) : condition{std::move(cond)}, body{std::move(
     }
 }
 
-void While::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    condition->doAnalysis(scope, depth);
+void While::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    condition->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(condition, scope);
-    body->doAnalysis(scope, depth + 1);
+    body->doAnalysis(*scope.duplicate(), depth + 1);
 }
 
-void Return::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void Return::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (what) {
         ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(what.value(), scope);
-        what.value()->doAnalysis(scope, depth);
+        what.value()->doAnalysis(*scope.duplicate(), depth);
     }
 }
 
@@ -331,17 +338,17 @@ FunctionCall::FunctionCall(Node name, std::optional<Node> args) : name{std::move
     }
 }
 
-void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     // TODO: fix this?
-    // name->doAnalysis(scope, depth);
+    // name->doAnalysis(*scope.duplicate(), depth);
 
-    // if (!scope.functions.contains(std::string(NODE_AS_REF(name, Name).literal))) {
-    //   throw std::runtime_error("Only functions can be called");
-    //}
+    if (scope.getVariable(std::string(NODE_AS_REF(name, Name).literal))) {
+        throw std::runtime_error("Only functions can be called");
+    }
 
-    auto argCnt = 0;
+    std::uint32_t argCnt = 0;
     if (args) {
-        args.value()->doAnalysis(scope, depth);
+        args.value()->doAnalysis(*scope.duplicate(), depth);
         assert(NODE_IS(args.value(), Parenthesised));
         auto& list = NODE_AS_REF(args.value(), Parenthesised);
         if (list.inner) {
@@ -352,11 +359,17 @@ void FunctionCall::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
         }
     }
     // TODO as above
-    if (scope.functions.contains(std::string(NODE_AS_REF(name, Name).literal))) {
-        if (argCnt != scope.functions.at(std::string(NODE_AS_REF(name, Name).literal)).numArgs) {
+    for (auto& s : scope.functions) {
+        std::cout << s.first << std::endl;
+    }
+    std::string funcName{NODE_AS_REF(name, Name).literal};
+    if (auto func = scope.getOrTransformFunction(funcName, argCnt); func) {
+        if (argCnt != func->numArgs) {
             throw std::runtime_error(
                 std::format("Number of arguments of {} does not match declaration", NODE_AS_REF(name, Name).literal));
         }
+    } else {
+        scope.addFunctionToToplevel(funcName, FunctionSymbol{argCnt});
     }
 }
 
@@ -366,20 +379,20 @@ CommaList::CommaList(Node left, Node right) : left{std::move(left)}, right{std::
     }
 }
 
-void CommaList::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
-    left->doAnalysis(scope, depth);
+void CommaList::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    left->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(left, scope);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(right, scope);
-    right->doAnalysis(std::move(scope), depth);
+    right->doAnalysis(*scope.duplicate(), depth);
 }
 Parenthesised::Parenthesised(std::optional<Node> inner) : inner{std::move(inner)} {
     if (!this->inner) {
         throw std::runtime_error("Empty parenthesised expression.");
     }
 }
-void Parenthesised::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void Parenthesised::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (inner)
-        inner.value()->doAnalysis(std::move(scope), depth);
+        inner.value()->doAnalysis(*scope.duplicate(), depth);
 }
 
 ArrayIndexing::ArrayIndexing(Node array, Node index) : array{std::move(array)}, index{std::move(index)} {
@@ -396,11 +409,11 @@ ArrayIndexing::ArrayIndexing(Node array, Node index) : array{std::move(array)}, 
     }
 }
 
-void ArrayIndexing::doAnalysis(SymbolScope scope, std::uint32_t depth) const {
+void ArrayIndexing::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(array, scope);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(index, scope);
-    array->doAnalysis(scope, depth);
-    index->doAnalysis(scope, depth);
+    array->doAnalysis(*scope.duplicate(), depth);
+    index->doAnalysis(*scope.duplicate(), depth);
 }
 
 } // namespace AST

@@ -295,7 +295,7 @@ void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
             }
             break;
         default:
-            throw std::runtime_error("Not implemented");
+            throw std::runtime_error("Not implemented codegenning");
         }
     }
     codegenBlock(currCFG->posterior.at(0).get());
