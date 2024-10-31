@@ -60,37 +60,42 @@ PrefixOperator::PrefixOperator(TokenType type, Node operand) : type{type}, opera
             auto& indexing = NODE_AS_REF(this->operand, ArrayIndexing);
             auto* indexExpr = CAST_NODE_IF_TYPE(indexing.index, BinaryOperator);
             if (indexExpr && indexExpr->type == TokenType::Sizespec) {
-                throw std::runtime_error("Operand of address-of operator must not use sizespec");
+                // apparently this is fine?
+                // throw std::runtime_error("Operand of address-of operator must not use sizespec");
             }
         }
     }
 }
 
 void doCheckForAddressOf(const SymbolScope& scope, const Node& operand) {
-    auto name = std::string([&]() {
+    auto name = ([&]() -> std::optional<std::string_view> {
         auto* id = CAST_NODE_IF_TYPE(operand, Name);
         if (id) {
             return id->literal;
         }
-        auto* arrayIndexing = CAST_NODE_IF_TYPE(operand, ArrayIndexing);
-        if (arrayIndexing) {
-            auto* id = CAST_NODE_IF_TYPE(arrayIndexing->array, Name);
-            if (id) {
-                return id->literal;
-            }
-        }
-        throw std::runtime_error("Operand of address-of operator must be identifier or array indexing expr");
-    }());
+        return std::nullopt;
 
-    if (!scope.getFunction(name)) {
-        if (scope.isUndecidedParameter(name))
-            throw std::runtime_error(std::format("Operand of address-of {} must not be a parameter", name));
-        auto var = scope.getVariable(name); // must therefore be variable
-        if (!var) {
-            throw std::runtime_error("Variable not in scope");
-        }
-        if (var->type == VariableType::Register || var->type == VariableType::Parameter) {
-            throw std::runtime_error("Operand of address-of must be neither register variable or parameter");
+        // apparently this is fine if we index in??
+        /*   auto* arrayIndexing = CAST_NODE_IF_TYPE(operand, ArrayIndexing);
+           if (arrayIndexing) {
+               auto* id = CAST_NODE_IF_TYPE(arrayIndexing->array, Name);
+               if (id) {
+                   return id->literal;
+               }
+           }*/
+        //   throw std::runtime_error("Operand of address-of operator must be identifier or array indexing expr");
+    }());
+    if (name) {
+        if (!scope.getFunction(*name)) {
+            if (scope.isUndecidedParameter(*name))
+                throw std::runtime_error(std::format("Operand of address-of {} must not be a parameter", *name));
+            auto var = scope.getVariable(*name); // must therefore be variable
+            if (!var) {
+                throw std::runtime_error("Variable not in scope");
+            }
+            if (var->type == VariableType::Register || var->type == VariableType::Parameter) {
+                throw std::runtime_error("Operand of address-of must be neither register variable or parameter");
+            }
         }
     }
 }
@@ -210,7 +215,17 @@ void If::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     condition->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(condition, scope);
     thenBranch->doAnalysis(*scope.duplicate(), depth + 1);
+    if (NODE_IS(thenBranch, Assignment)) {
+        if (NODE_AS_REF(thenBranch, Assignment).modifyer) {
+            throw std::runtime_error("Declaring in an unscoped if branch is forbidden!");
+        }
+    }
     if (elseBranch) {
+        if (NODE_IS(elseBranch.value(), Assignment)) {
+            if (NODE_AS_REF(elseBranch.value(), Assignment).modifyer) {
+                throw std::runtime_error("Declaring in an unscoped if branch is forbidden!");
+            }
+        }
         elseBranch.value()->doAnalysis(*scope.duplicate(), depth + 1);
     }
 }

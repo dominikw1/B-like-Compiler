@@ -283,11 +283,75 @@ void parseAndAnalyseProgram(std::string_view program) {
     AST.analyze();
 }
 
+static auto err = [](std::string_view program) {
+    std::cerr << std::format("{}", program) << std::endl;
+    ASSERT_ANY_THROW(parseAndAnalyseProgram(program));
+};
+static auto ok = [](std::string_view program) {
+    std::cerr << std::format("{}", program) << std::endl;
+    ASSERT_NO_THROW(parseAndAnalyseProgram(program));
+};
+
 TEST(ParserTests, ParserDoesNotThrowWithVariousExamples) {
-    auto err = [&](std::string_view program) { ASSERT_ANY_THROW(parseAndAnalyseProgram(program)); };
-    auto ok = [&](std::string_view program) { ASSERT_NO_THROW(parseAndAnalyseProgram(program)); };
     ok("f(a, b) { g(a)[0] = b; }");
     err("f(){//}");
     err("fn(x) { f(1); f(2, 3); }");
     ok("f(fn) { fn(fn); }");
+}
+
+TEST(ParserTests, callNonNameFunctionFails) { err("fn(x) { fn(x)(x); }"); }
+
+TEST(ParserTests, calls) {
+    ok("f(fn) { fn(fn); }");
+    ok("f(x) { return x; } g(x) { return f(x); }");
+    ok("g(x) { return f(x + 1); } f(x) { return x; }");
+    ok("g(x) { return f(x + 1); }");
+    err("fn(x) { (fn)(x); }");
+    err("fn(x) { (x)(x); }");
+    err("fn(x) { f(1); f(2, 3); }");
+    err("fn(x) { f(1, 3); f(2); }");
+    err("f(a) {} fn(x) { f(1, 3); }");
+    err("f(a, b) {} fn(x) { f(1); }");
+    err("f() {} fn(x) { f(1); }");
+    err("fn(x) { f(1, 3); } f(a) {}");
+    err("fn(x) { f(1); } f(a, b) {}");
+    err("fn(x) { f(1); } f(){}");
+}
+
+TEST(ParserTests, decls) {
+    ok("fn(a){register b = a;}");
+    ok("fn(a){auto b = a;}");
+    ok("fn(a){{register a = a;}}");
+    ok("fn(a){{auto a = a;}}");
+    err("fn(a){{auto a = &a;}}");
+    err("fn(){if(1)register a = 1;}");
+    err("fn(){if(1){}else register a = 1;}");
+    ok("fn(){if(1){}else{register a = 1;}}");
+}
+
+TEST(ParserTests, subscripts) {
+    ok("f(a, b) { return a[b]; }");
+    ok("f(a, b) { return a[b@1]; }");
+    ok("f(a, b) { return a[b@2]; }");
+    err("f(a, b) { return a[b@3]; }");
+    ok("f(a, b) { return a[b@4]; }");
+    err("f(a, b) { return a[b@5]; }");
+    err("f(a, b) { return a[b@6]; }");
+    err("f(a, b) { return a[b@7]; }");
+    ok("f(a, b) { return a[b@8]; }");
+    err("f(a, b) { return a[b@9]; }");
+    err("f(a, b) { return a[b@10]; }");
+    err("f(a, b) { return a[b@a]; }");
+    err("f(a, b) { return a[b@]; }");
+}
+
+TEST(ParserTests, addrof) {
+    ok("f() { auto a = 0; return &a; }");
+    ok("f(a, b) { return &a[b]; }");
+    ok("f(a, b) { return &a[b@1]; }");
+    ok("f(a, b) { return &a[b@2]; }");
+    ok("f(a, b) { return &a[b@4]; }");
+    ok("f(a, b) { return &a[b@8]; }");
+    err("f(a) { return &a; }");
+    err("f() { register a = 0; return &a; }");
 }
