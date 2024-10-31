@@ -162,12 +162,12 @@ Scope::Scope(std::vector<Node> scoped) : scoped{std::move(scoped)} {
 
 void Scope::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     for (auto& scopedStatement : scoped) {
-        scopedStatement->doAnalysis(*scope.duplicate(), depth+1);
+        scopedStatement->doAnalysis(*scope.duplicate(), depth + 1);
         if (NODE_IS(scopedStatement, Assignment)) {
             auto& assignment = NODE_AS_REF(scopedStatement, Assignment);
             if (assignment.modifyer) { // no param -> new!
                 scope.variables[std::string(NODE_AS_REF(assignment.left, Name).literal)] = {
-                    .depthDecl = depth+1,
+                    .depthDecl = depth + 1,
                     .type = (assignment.modifyer.value().type == TokenType::Register) ? VariableType::Register
                                                                                       : VariableType::Auto};
             }
@@ -221,6 +221,13 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
         std::any_of(this->body.begin(), this->body.end(), [](auto& n) { return !n; })) {
         throw std::runtime_error("Malformed function");
     }
+    if (this->argList) {
+        assert(NODE_IS(this->argList.value(), Parenthesised));
+        if (!NODE_AS_REF(this->argList.value(), Parenthesised).inner) {
+            this->argList = std::nullopt; // remove indirection if emptyF
+        }
+    }
+
     if (std::any_of(this->body.begin(), this->body.end(),
                     [](auto& statement) { return NODE_IS(statement, Function); })) {
         throw std::runtime_error("Function definition within function definition");
@@ -333,8 +340,12 @@ FunctionCall::FunctionCall(Node name, std::optional<Node> args) : name{std::move
     if (!this->name || (this->args && !this->args.value())) {
         throw std::runtime_error("Malformed function call");
     }
+    assert(NODE_IS(this->args.value(), Parenthesised));
+    if (this->args && !NODE_AS_REF(this->args.value(), Parenthesised).inner) {
+        this->args = std::nullopt; // remove indirection to empty arg list
+    }
     if (!NODE_IS(this->name, Name)) {
-        throw std::runtime_error("Function name must be unparenthesised identifier. Is: " + name->toString());
+        throw std::runtime_error("Function name must be unparenthesised identifier. Is: " + this->name->toString());
     }
 }
 
@@ -342,7 +353,7 @@ void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     // TODO: fix this?
     // name->doAnalysis(*scope.duplicate(), depth);
 
-    if (scope.getVariable(std::string(NODE_AS_REF(name, Name).literal))) {
+    if (!NODE_IS(name, Name) || scope.getVariable(std::string(NODE_AS_REF(name, Name).literal))) {
         throw std::runtime_error("Only functions can be called");
     }
 
@@ -362,6 +373,7 @@ void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     for (auto& s : scope.functions) {
         std::cout << s.first << std::endl;
     }
+
     std::string funcName{NODE_AS_REF(name, Name).literal};
     if (auto func = scope.getOrTransformFunction(funcName, argCnt); func) {
         if (argCnt != func->numArgs) {
@@ -386,9 +398,9 @@ void CommaList::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     right->doAnalysis(*scope.duplicate(), depth);
 }
 Parenthesised::Parenthesised(std::optional<Node> inner) : inner{std::move(inner)} {
-    if (!this->inner) {
-        throw std::runtime_error("Empty parenthesised expression.");
-    }
+    // if (!this->inner) {
+    //   throw std::runtime_error("Empty parenthesised expression.");
+    //}
 }
 void Parenthesised::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (inner)

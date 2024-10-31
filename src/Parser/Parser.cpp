@@ -74,7 +74,7 @@ static Node parseParenGroup(Parser& parser, Token consumed) {
     auto lookahead = parser.lookaheadToken(0);
     if (lookahead && lookahead->type == TokenType::Right_Parenthesis) {
         parser.consumeTokenOfType(TokenType::Right_Parenthesis);
-        return nullptr; // empty paren group - valid expr
+        return std::make_unique<Parenthesised>(std::nullopt); // empty paren group - valid expr
     }
     auto expr = parser.parseExpression();
     parser.consumeTokenOfType(TokenType::Right_Parenthesis);
