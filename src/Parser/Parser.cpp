@@ -3,7 +3,6 @@
 #include <string>
 
 namespace ParsingInternals {
-// Heavily inspired by Crafting Interpreters by Robert Nystrom
 
 using namespace AST;
 enum Precedence : unsigned int {
@@ -115,11 +114,6 @@ static Node parseBinaryOperator(Parser& parser, Node prev, Token consumed, std::
     }
     return std::make_unique<BinaryOperator>(consumed.type, std::move(prev), std::move(exp.value()));
 }
-/*
-[[nodiscard]]
-static Node parsePostfixOperator(Parser& parser, Node prev, Token consumed, Precedence _) {
-    return std::make_unique<PostfixOperator>(consumed.type, std::move(prev));
-}*/
 
 [[nodiscard]]
 static Node parseEmptyStatement(Parser& parser, Token consumed) {
@@ -129,7 +123,6 @@ static Node parseEmptyStatement(Parser& parser, Token consumed) {
 [[nodiscard]]
 static Node parseAssignment(Parser& parser, Token consumed) {
     // we come here through register / auto
-    // std::cout << "In correct function\n";
     auto left = parser.parseExprWithPrecedence(
         Precedence::PREC_LOGIC_OR); // to make sure we are not accidentally picking up the whole assignemt
     if (!left) {
@@ -245,7 +238,7 @@ std::optional<Node> Parser::parseExprWithPrecedence(std::uint32_t prec) {
         throw std::runtime_error("Error parsing token " + token.toString() + ". Expected an expression");
 
     auto parsedPrefix = prefixParser(*this, token);
-    // std::cout << "curr prec = " << prec << std::endl;
+
     while (prec <= getPrecedenceOfNext()) {
         maybeToken = consumeNextToken();
         if (!maybeToken) {
@@ -269,7 +262,6 @@ std::optional<Node> Parser::parseExpression() {
 std::vector<Node> Parser::parseStatements() {
     std::vector<Node> statements;
     for (auto statement = parseStatement(); statement; statement = parseStatement()) {
-        //  std::cout<<"Parsed " << statement->toString()<<std::endl;
         statements.push_back(std::move(*statement));
     }
     return statements;
@@ -277,14 +269,13 @@ std::vector<Node> Parser::parseStatements() {
 
 [[nodiscard]]
 std::optional<Node> Parser::parseStatement() {
-    // std::cout << "tryna parse statement" << std::endl;
     if (auto lookahead = lookaheadToken(0); lookahead && lookahead->type == TokenType::Right_Brace) {
         return std::nullopt; // end of scope
     }
     auto expr = parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
     if (!expr)
         return std::nullopt;
-    if (expr.value()->isStatement()) // && expr.value()->getType() != ExpressionType::Assignment)
+    if (expr.value()->isStatement())
         return expr;
     consumeTokenOfType(TokenType::Semicolon);
     return std::make_unique<ExpressionStatement>(std::move(expr.value()));
@@ -383,7 +374,6 @@ void registerAllSubParsers() {
 }
 
 AST::AST Parser::parse() {
-    // std::cout << "Starting parsing..." << std::endl;
     registerAllSubParsers();
     auto funcs = parseFunctions();
     if (tokens.size() != 0) {

@@ -150,7 +150,7 @@ struct AssignmentExpr : Expression {
     Node right;
     AssignmentExpr(Node left, Node right);
     std::string sExpression() const override {
-        return std::format("({} = {})", left->sExpression(), right->sExpression());
+        return std::format("(= {} {})", left->sExpression(), right->sExpression());
     }
 
     std::string toString() const override {
@@ -170,7 +170,7 @@ struct Assignment : Statement {
     Assignment(std::optional<Token> modifyer, Node left, Node right);
     Assignment(Node left, Node right) : Assignment(std::nullopt, std::move(left), std::move(right)) {}
     std::string sExpression() const override {
-        return std::format("({}{} = {})", modifyer ? modifyer->lexeme : "", left->sExpression(), right->sExpression());
+        return std::format("(= {} {} {})", modifyer ? modifyer->lexeme : "", left->sExpression(), right->sExpression());
     }
 
     std::string toString() const override {
