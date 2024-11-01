@@ -56,14 +56,6 @@ PrefixOperator::PrefixOperator(TokenType type, Node operand) : type{type}, opera
         if (!NODE_IS(this->operand, Name) && !NODE_IS(this->operand, ArrayIndexing)) {
             throw std::runtime_error("Operand of address-of operator must be of form identifier or identifier[expr]");
         }
-        if (NODE_IS(this->operand, ArrayIndexing)) {
-            auto& indexing = NODE_AS_REF(this->operand, ArrayIndexing);
-            auto* indexExpr = CAST_NODE_IF_TYPE(indexing.index, BinaryOperator);
-            if (indexExpr && indexExpr->type == TokenType::Sizespec) {
-                // apparently this is fine?
-                // throw std::runtime_error("Operand of address-of operator must not use sizespec");
-            }
-        }
     }
 }
 
@@ -237,7 +229,6 @@ If::If(Node condition, Node thenBranch, std::optional<Node> elseBranch)
 
 void If::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     condition->doAnalysis(*scope.duplicate(), depth);
-    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(condition, scope);
     thenBranch->doAnalysis(*scope.duplicate(), depth + 1);
     if (NODE_IS(thenBranch, Assignment)) {
         if (NODE_AS_REF(thenBranch, Assignment).modifyer) {
@@ -358,13 +349,11 @@ While::While(Node cond, Node body) : condition{std::move(cond)}, body{std::move(
 
 void While::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     condition->doAnalysis(*scope.duplicate(), depth);
-    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(condition, scope);
     body->doAnalysis(*scope.duplicate(), depth + 1);
 }
 
 void Return::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (what) {
-        ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(what.value(), scope);
         what.value()->doAnalysis(*scope.duplicate(), depth);
     }
 }
