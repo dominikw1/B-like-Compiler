@@ -8,6 +8,17 @@
 #include <unordered_map>
 #include <unordered_set>
 
+template <typename... Bases> struct overload : Bases... {
+    using is_transparent = void;
+    using Bases::operator()...;
+};
+
+struct char_pointer_hash {
+    auto operator()(const char* ptr) const noexcept { return std::hash<std::string_view>{}(ptr); }
+};
+
+using transparent_string_hash = overload<std::hash<std::string>, std::hash<std::string_view>, char_pointer_hash>;
+
 enum class VariableType { Auto, Register, Parameter };
 
 struct VariableSymbol {
@@ -20,20 +31,20 @@ struct FunctionSymbol {
 };
 
 struct SymbolScope {
-    std::unordered_map<std::string, FunctionSymbol> functions;
-    std::unordered_map<std::string, VariableSymbol> variables;
+    std::unordered_map<std::string, FunctionSymbol, transparent_string_hash, std::equal_to<>> functions;
+    std::unordered_map<std::string, VariableSymbol, transparent_string_hash, std::equal_to<>> variables;
     SymbolScope* parent = nullptr;
-    std::unordered_set<std::string> undecidedParams;
+    std::unordered_set<std::string, transparent_string_hash, std::equal_to<>> undecidedParams;
 
     std::optional<FunctionSymbol> getFunctionAtCurr(std::string_view name) const {
-        if (auto foundIt = functions.find(std::string(name)); foundIt != functions.end()) {
+        if (auto foundIt = functions.find(name); foundIt != functions.end()) {
             return foundIt->second;
         }
         return std::nullopt;
     }
 
     template <typename SymbolType> bool raiseParamAtCurr(std::string_view name, SymbolType symbol) {
-        if (undecidedParams.contains(std::string(name))) {
+        if (undecidedParams.contains(name)) {
             undecidedParams.erase(std::string(name));
             if constexpr (std::is_same<SymbolType, FunctionSymbol>::value) {
                 functions[std::string(name)] = symbol;
@@ -49,11 +60,11 @@ struct SymbolScope {
     }
 
     bool isUndecidedParameter(std::string_view name) const {
-        return undecidedParams.contains(std::string(name)) || (parent && parent->isUndecidedParameter(name));
+        return undecidedParams.contains(name) || (parent && parent->isUndecidedParameter(name));
     }
 
     std::optional<VariableSymbol> getVariableAtCurr(std::string_view name) const {
-        if (auto foundIt = variables.find(std::string(name)); foundIt != variables.end()) {
+        if (auto foundIt = variables.find(name); foundIt != variables.end()) {
             return foundIt->second;
         }
 
@@ -80,7 +91,7 @@ struct SymbolScope {
     }
 
     bool symbolExists(std::string_view name) const {
-        if (getFunctionAtCurr(name) || getVariableAtCurr(name) || undecidedParams.contains(std::string(name)))
+        if (getFunctionAtCurr(name) || getVariableAtCurr(name) || undecidedParams.contains(name))
             return true;
         if (parent) {
             return parent->symbolExists(name);
