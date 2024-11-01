@@ -128,6 +128,30 @@ void ExpressionStatement::doAnalysis(SymbolScope& scope, std::uint32_t depth) co
     expression->doAnalysis(*scope.duplicate(), depth);
 }
 
+AssignmentExpr::AssignmentExpr(Node left, Node right) : left{std::move(left)}, right{std::move(right)} {
+    if (!this->left || !this->right) {
+        throw std::runtime_error("Malformed assignment statement");
+    }
+    if (!NODE_IS(this->left, Name) && !NODE_IS(this->left, ArrayIndexing)) {
+        throw std::runtime_error("Left side of assignment must be identifier");
+    }
+}
+
+void AssignmentExpr::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+    if (auto name = NODE_IS(left, Name) ? std::optional{std::string(NODE_AS_REF(left, Name).literal)} : std::nullopt) {
+        if (scope.getFunction(*name)) {
+            throw std::runtime_error("Cannot assign to function");
+        }
+        if (!scope.getOrTransformVariable(*name)) {
+            throw std::runtime_error("Assignment to unknown identifier");
+        }
+    } else {
+        // TODO: is l value  analysis
+        left->doAnalysis(*scope.duplicate(), depth);
+    }
+    right->doAnalysis(*scope.duplicate(), depth);
+}
+
 Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
     : modifyer{std::move(modifyer)}, left{std::move(left)}, right{std::move(right)} {
     if (!this->left || !this->right) {

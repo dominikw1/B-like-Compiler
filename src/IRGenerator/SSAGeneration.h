@@ -47,6 +47,7 @@ class SSAGenerator {
     void codegenExprStatement(const AST::ExpressionStatement& statement);
     void codegenReturnSt(const AST::Expression* returnNode);
     void codegenAssignment(const AST::Assignment& assignmentStatement);
+    llvm::Value* codegenAssignmentExpr(const AST::AssignmentExpr& assignmentExpr);
     void codegenIf(const CFG::BasicBlock* ifBlock);
     void codegenWhile(const CFG::BasicBlock* whileBlock);
 

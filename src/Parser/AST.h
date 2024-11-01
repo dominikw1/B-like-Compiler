@@ -20,6 +20,7 @@ enum class ExpressionType {
     BinaryOperator,
     ExpressionStatement,
     Assignment,
+    AssignmentExpr,
     Scope,
     If,
     Function,
@@ -141,6 +142,24 @@ struct ExpressionStatement : Statement {
 
     bool anyOf(std::function<bool(const Expression*)>& pred) const override {
         return pred(this) || expression->anyOf(pred);
+    }
+};
+
+struct AssignmentExpr : Expression {
+    Node left;
+    Node right;
+    AssignmentExpr(Node left, Node right);
+    std::string sExpression() const override {
+        return std::format("({} = {})", left->sExpression(), right->sExpression());
+    }
+
+    std::string toString() const override {
+        return std::format("AssignmentExpr: \n\t{} = {}", left->toString(), right->toString());
+    }
+    constexpr ExpressionType getType() const override { return ExpressionType::AssignmentExpr; }
+    void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
+    bool anyOf(std::function<bool(const Expression*)>& pred) const override {
+        return pred(this) || left->anyOf(pred) || right->anyOf(pred);
     }
 };
 
@@ -376,7 +395,7 @@ struct Parenthesised : Expression {
     std::optional<Node> inner;
     Parenthesised(std::optional<Node> inner);
 
-    std::string sExpression() const override { return std::format("({})", inner ? inner.value()->sExpression() : ""); }
+    std::string sExpression() const override { return std::format("{}", inner ? inner.value()->sExpression() : ""); }
     std::string toString() const override { return std::format("( {} )", inner ? inner.value()->toString() : ""); }
     constexpr ExpressionType getType() const override { return ExpressionType::Parenthesised; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;

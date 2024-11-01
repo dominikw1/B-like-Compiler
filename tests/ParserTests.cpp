@@ -22,7 +22,9 @@ using namespace AST;
 AST::AST parseProgram(std::string_view program) {
     auto lexed = scan(program);
     ParsingInternals::Parser p{lexed};
-    return p.parse();
+    auto AST = p.parse();
+    std::cout << AST.sExpression() << std::endl;
+    return AST;
 }
 
 TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
@@ -37,7 +39,10 @@ TEST(ParserTests, ParserParsesIfWithoutElseCorrectly) {
     auto& bInCond = NODE_AS_REF(equalsExpr.operand2, Name);
     ASSERT_EQ(aInCond.literal, "a");
     ASSERT_EQ(bInCond.literal, "b");
-    auto& assignmentStatement = NODE_AS_REF(ifExpr.thenBranch, Assignment);
+    ASSERT_EQ(ifExpr.thenBranch->getType(), ExpressionType::ExpressionStatement);
+
+    auto& assignmentStatement =
+        NODE_AS_REF(NODE_AS_REF(ifExpr.thenBranch, ExpressionStatement).expression, AssignmentExpr);
     auto assignmentA = CAST_NODE_IF_TYPE(assignmentStatement.left, Name);
     auto assignment5 = CAST_NODE_IF_TYPE(assignmentStatement.right, Value);
     ASSERT_TRUE(assignmentA && assignmentA->literal == "a");
@@ -49,7 +54,10 @@ TEST(ParserTests, ParserParsesIfWithElseCorrectly) {
     auto& statements = NODE_AS_REF(ast.getTopLevel().at(0), Function).body;
     auto ifExpr = CAST_NODE_IF_TYPE(statements.at(0), If);
     ASSERT_TRUE(ifExpr && ifExpr->condition && ifExpr->thenBranch && ifExpr->elseBranch);
-    auto assignment = CAST_NODE_IF_TYPE(ifExpr->elseBranch.value(), Assignment);
+    std::cout << ifExpr->elseBranch.value()->toString() << std::endl;
+
+    auto assignment =
+        CAST_NODE_IF_TYPE(NODE_AS_REF(ifExpr->elseBranch.value(), ExpressionStatement).expression, AssignmentExpr);
     ASSERT_TRUE(assignment);
     auto a = CAST_NODE_IF_TYPE(assignment->left, Name);
     ASSERT_TRUE(a && a->literal == "a");

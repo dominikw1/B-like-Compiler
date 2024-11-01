@@ -23,11 +23,14 @@ enum Precedence : unsigned int {
     PREC_ARRAY,
 };
 
-typedef struct {
+enum class Associativity { Left, Right, None };
+
+struct TokenParsingInfo {
     Node (*prefix)(Parser&, Token);
-    Node (*infix)(Parser&, Node, Token, Precedence);
+    Node (*infix)(Parser&, Node, Token, std::uint32_t);
     Precedence infixPrecedence;
-} TokenParsingInfo;
+    Associativity associativity;
+};
 
 std::unordered_map<TokenType, TokenParsingInfo> subParsers;
 
@@ -82,7 +85,7 @@ static Node parseParenGroup(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseCommaList(Parser& parser, Node prev, Token _token, Precedence prec) {
+static Node parseCommaList(Parser& parser, Node prev, Token _token, std::uint32_t prec) {
     auto right = parser.parseExprWithPrecedence(prec);
     if (!right) {
         throw std::runtime_error("comma list incomplete");
@@ -105,7 +108,7 @@ static Node parsePrefixOperator(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseBinaryOperator(Parser& parser, Node prev, Token consumed, Precedence currPrec) {
+static Node parseBinaryOperator(Parser& parser, Node prev, Token consumed, std::uint32_t currPrec) {
     auto exp = parser.parseExprWithPrecedence(currPrec);
     if (!exp) {
         throw std::runtime_error("Incomplete binary op");
@@ -142,14 +145,13 @@ static Node parseAssignment(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseAssignment(Parser& parser, Node prev, Token consumed, Precedence prec) {
+static Node parseAssignment(Parser& parser, Node prev, Token consumed, std::uint32_t prec) {
     // std::cout << "in correct method" << std::endl;
     auto right = parser.parseExpression();
     if (!right) {
         throw std::runtime_error("Failed to parse right side of assignment");
     }
-    parser.consumeTokenOfType(TokenType::Semicolon);
-    return std::make_unique<Assignment>(std::move(prev), std::move(right.value()));
+    return std::make_unique<AssignmentExpr>(std::move(prev), std::move(right.value()));
 }
 
 [[nodiscard]]
@@ -161,7 +163,7 @@ static Node parseScope(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseFunctionCall(Parser& parser, Node prev, Token consumed, Precedence _prec) {
+static Node parseFunctionCall(Parser& parser, Node prev, Token consumed, std::uint32_t _prec) {
     auto args = parseParenGroup(parser, std::move(consumed));
     return std::make_unique<FunctionCall>(std::move(prev), args ? std::optional{std::move(args)} : std::nullopt);
 }
@@ -206,7 +208,7 @@ static Node parseWhile(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-static Node parseArrayIndexing(Parser& parser, Node prev, Token _consumed, Precedence prec) {
+static Node parseArrayIndexing(Parser& parser, Node prev, Token _consumed, std::uint32_t prec) {
     auto index = parser.parseExpression(); // not using prec cause otherwise nothing will be found
     if (!index) {
         throw std::runtime_error("No index supplied for array indexing");
@@ -230,7 +232,7 @@ static Node parseReturn(Parser& parser, Token consumed) {
 }
 
 [[nodiscard]]
-std::optional<Node> Parser::parseExprWithPrecedence(Precedence prec) {
+std::optional<Node> Parser::parseExprWithPrecedence(std::uint32_t prec) {
     auto maybeToken = consumeNextToken();
     if (!maybeToken) {
         return std::nullopt;
@@ -251,7 +253,9 @@ std::optional<Node> Parser::parseExprWithPrecedence(Precedence prec) {
         }
         token = *maybeToken;
         auto infixParser = subParsers[token.type].infix;
-        parsedPrefix = infixParser(*this, std::move(parsedPrefix), token, subParsers[token.type].infixPrecedence);
+        auto newPrec = subParsers[token.type].infixPrecedence +
+                       (subParsers[token.type].associativity == Associativity::Right ? 0 : 1);
+        parsedPrefix = infixParser(*this, std::move(parsedPrefix), token, newPrec);
     }
     return parsedPrefix;
 }
@@ -280,7 +284,7 @@ std::optional<Node> Parser::parseStatement() {
     auto expr = parseExprWithPrecedence(Precedence::PREC_ASSIGNMENT);
     if (!expr)
         return std::nullopt;
-    if (expr.value()->isStatement())
+    if (expr.value()->isStatement()) // && expr.value()->getType() != ExpressionType::Assignment)
         return expr;
     consumeTokenOfType(TokenType::Semicolon);
     return std::make_unique<ExpressionStatement>(std::move(expr.value()));
@@ -324,53 +328,58 @@ Precedence Parser::getPrecedenceOfNext() {
 }
 
 void registerAllSubParsers() {
-    subParsers[TokenType::Number] = {&parseValue, nullptr, Precedence::PREC_NONE};
-    subParsers[TokenType::Identifier] = {&parseIdentifier, nullptr, Precedence::PREC_NONE};
+    subParsers[TokenType::Number] = {&parseValue, nullptr, Precedence::PREC_NONE, Associativity::None};
+    subParsers[TokenType::Identifier] = {&parseIdentifier, nullptr, Precedence::PREC_NONE, Associativity::None};
 
-    subParsers[TokenType::Minus] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS};
-    subParsers[TokenType::Plus] = {nullptr, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS};
-    subParsers[TokenType::Star] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
-    subParsers[TokenType::Slash] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
-    subParsers[TokenType::Mod] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD};
+    subParsers[TokenType::Minus] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS,
+                                    Associativity::Left};
+    subParsers[TokenType::Plus] = {nullptr, &parseBinaryOperator, Precedence::PREC_PLUS_MINUS, Associativity::Left};
+    subParsers[TokenType::Star] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD, Associativity::Left};
+    subParsers[TokenType::Slash] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD, Associativity::Left};
+    subParsers[TokenType::Mod] = {nullptr, &parseBinaryOperator, Precedence::PREC_MUL_DIV_MOD, Associativity::Left};
 
-    subParsers[TokenType::Exclamation_Mark] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
-    subParsers[TokenType::Sizespec] = {nullptr, &parseBinaryOperator, PREC_ASSIGNMENT};
+    subParsers[TokenType::Exclamation_Mark] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE,
+                                               Associativity::None};
+    subParsers[TokenType::Sizespec] = {nullptr, &parseBinaryOperator, PREC_ASSIGNMENT, Associativity::None};
 
-    subParsers[TokenType::Tilde] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE};
-    subParsers[TokenType::And_Bit] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_AND};
-    subParsers[TokenType::Or_Bit] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_OR};
-    subParsers[TokenType::Xor] = {nullptr, &parseBinaryOperator, PREC_LOGIC_BIT_XOR};
-    subParsers[TokenType::Bitshift_Left] = {nullptr, &parseBinaryOperator, PREC_BIT_SHIFT};
-    subParsers[TokenType::Bitshift_Right] = {nullptr, &parseBinaryOperator, PREC_BIT_SHIFT};
+    subParsers[TokenType::Tilde] = {&parsePrefixOperator, nullptr, Precedence::PREC_NONE, Associativity::None};
+    subParsers[TokenType::And_Bit] = {&parsePrefixOperator, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_AND,
+                                      Associativity::Left};
+    subParsers[TokenType::Or_Bit] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_BIT_OR, Associativity::Left};
+    subParsers[TokenType::Xor] = {nullptr, &parseBinaryOperator, PREC_LOGIC_BIT_XOR, Associativity::Left};
+    subParsers[TokenType::Bitshift_Left] = {nullptr, &parseBinaryOperator, PREC_BIT_SHIFT, Associativity::Left};
+    subParsers[TokenType::Bitshift_Right] = {nullptr, &parseBinaryOperator, PREC_BIT_SHIFT, Associativity::Left};
 
-    subParsers[TokenType::And_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_AND};
-    subParsers[TokenType::Or_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_OR};
+    subParsers[TokenType::And_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_AND,
+                                          Associativity::Left};
+    subParsers[TokenType::Or_Logical] = {nullptr, &parseBinaryOperator, Precedence::PREC_LOGIC_OR, Associativity::Left};
 
-    subParsers[TokenType::Left_Parenthesis] = {&parseParenGroup, &parseFunctionCall, Precedence::PREC_ARRAY};
-    subParsers[TokenType::Right_Parenthesis] = {nullptr, nullptr, Precedence::PREC_NONE};
-    subParsers[TokenType::Left_Brace] = {&parseScope, nullptr, PREC_NONE};
-    subParsers[TokenType::Right_Brace] = {nullptr, nullptr, PREC_NONE};
-    subParsers[TokenType::Left_Bracket] = {nullptr, &parseArrayIndexing, PREC_ARRAY};
-    subParsers[TokenType::Right_Bracket] = {nullptr, nullptr, PREC_NONE};
+    subParsers[TokenType::Left_Parenthesis] = {&parseParenGroup, &parseFunctionCall, Precedence::PREC_ARRAY,
+                                               Associativity::Left};
+    subParsers[TokenType::Right_Parenthesis] = {nullptr, nullptr, Precedence::PREC_NONE, Associativity::None};
+    subParsers[TokenType::Left_Brace] = {&parseScope, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Right_Brace] = {nullptr, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Left_Bracket] = {nullptr, &parseArrayIndexing, PREC_ARRAY, Associativity::Left};
+    subParsers[TokenType::Right_Bracket] = {nullptr, nullptr, PREC_NONE, Associativity::None};
 
-    subParsers[TokenType::Semicolon] = {&parseEmptyStatement, nullptr, Precedence::PREC_NONE};
-    subParsers[TokenType::Assignment] = {nullptr, &parseAssignment, PREC_ASSIGNMENT};
+    subParsers[TokenType::Semicolon] = {&parseEmptyStatement, nullptr, Precedence::PREC_NONE, Associativity::None};
+    subParsers[TokenType::Assignment] = {nullptr, &parseAssignment, PREC_ASSIGNMENT, Associativity::Right};
     // Comparisons
-    subParsers[TokenType::Equals] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
-    subParsers[TokenType::Uneqal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
-    subParsers[TokenType::Larger] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
-    subParsers[TokenType::Larger_Equal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
-    subParsers[TokenType::Smaller] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
-    subParsers[TokenType::Smaller_Equal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS};
+    subParsers[TokenType::Equals] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS, Associativity::Left};
+    subParsers[TokenType::Uneqal] = {nullptr, &parseBinaryOperator, PREC_IS_EQUALS, Associativity::Left};
+    subParsers[TokenType::Larger] = {nullptr, &parseBinaryOperator, PREC_ARITH_COMP, Associativity::Left};
+    subParsers[TokenType::Larger_Equal] = {nullptr, &parseBinaryOperator, PREC_ARITH_COMP, Associativity::Left};
+    subParsers[TokenType::Smaller] = {nullptr, &parseBinaryOperator, PREC_ARITH_COMP, Associativity::Left};
+    subParsers[TokenType::Smaller_Equal] = {nullptr, &parseBinaryOperator, PREC_ARITH_COMP, Associativity::Left};
 
     // Keywords
-    subParsers[TokenType::If] = {&parseIf, nullptr, PREC_NONE};
-    subParsers[TokenType::Else] = {nullptr, nullptr, PREC_NONE};
-    subParsers[TokenType::Register] = {&parseAssignment, nullptr, PREC_NONE};
-    subParsers[TokenType::Auto] = {&parseAssignment, nullptr, PREC_NONE};
-    subParsers[TokenType::While] = {&parseWhile, nullptr, PREC_NONE};
-    subParsers[TokenType::Return] = {&parseReturn, nullptr, PREC_NONE};
-    subParsers[TokenType::Comma] = {nullptr, &parseCommaList, PREC_ASSIGNMENT};
+    subParsers[TokenType::If] = {&parseIf, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Else] = {nullptr, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Register] = {&parseAssignment, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Auto] = {&parseAssignment, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::While] = {&parseWhile, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Return] = {&parseReturn, nullptr, PREC_NONE, Associativity::None};
+    subParsers[TokenType::Comma] = {nullptr, &parseCommaList, PREC_ASSIGNMENT, Associativity::Right};
 }
 
 AST::AST Parser::parse() {

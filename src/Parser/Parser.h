@@ -32,7 +32,7 @@ class Parser {
     std::vector<AST::Node> parseStatements();
     AST::Node parseFunction();
     std::vector<AST::Node> parseFunctions();
-    std::optional<AST::Node> parseExprWithPrecedence(Precedence prec);
+    std::optional<AST::Node> parseExprWithPrecedence(std::uint32_t prec);
     std::optional<Token> consumeNextToken();
     std::optional<Token> lookaheadToken(std::uint32_t lookahead);
     bool isNextTokenOfType(TokenType type);

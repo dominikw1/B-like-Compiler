@@ -251,12 +251,27 @@ llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
         return codegenUnaryOp(expr);
     case AST::ExpressionType::FunctionCall:
         return codegenFunctionCall(expr);
+    case AST::ExpressionType::AssignmentExpr:
+        return codegenAssignmentExpr(static_cast<const AST::AssignmentExpr&>(expr));
     default:
         throw std::runtime_error(std::format("Not implemented expr {}", expr.toString()));
     }
 }
 void SSAGenerator::codegenExprStatement(const AST::ExpressionStatement& statement) {
     codegenExpression(*statement.expression);
+}
+
+llvm::Value* SSAGenerator::codegenAssignmentExpr(const AST::AssignmentExpr& assignmentExpr) {
+    if (assignmentExpr.left->getType() != AST::ExpressionType::Name) {
+        throw std::runtime_error("cannot deal with this yet");
+    }
+
+    auto varName = static_cast<const AST::Name&>(*assignmentExpr.left).literal;
+    auto* expr = codegenExpression(*assignmentExpr.right);
+
+    // maybe store as well?
+    writeVariable(varName, currBlock, expr);
+    return expr;
 }
 
 void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement) {
