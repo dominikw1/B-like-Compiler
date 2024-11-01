@@ -8,8 +8,10 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
 namespace AST {
 enum class ExpressionType {
     Value,
@@ -36,6 +38,7 @@ enum class ExpressionType {
 
 struct Expression {
     virtual std::string toString() const { return "not implemented toString"; }
+    virtual std::string sExpression() const = 0;
     virtual bool isStatement() const { return false; }
     virtual void doAnalysis(SymbolScope& scope, std::uint32_t depth) const = 0;
     constexpr virtual ExpressionType getType() const = 0;
@@ -51,12 +54,21 @@ class AST {
     AST(std::vector<Node> toplevel) : toplevel{std::move(toplevel)} {}
     const std::vector<Node>& getTopLevel() const { return toplevel; };
     std::vector<Node> takeTopLevel() { return std::move(toplevel); };
+    std::string sExpression() const {
+        std::string program = "(program ";
+        for (const auto& func : toplevel) {
+            program += func->sExpression();
+        }
+        program += ")";
+        return program;
+    }
     void analyze() const;
 };
 
 struct Value : Expression {
     std::int64_t val;
     Value(std::int64_t v) : val{v} {}
+    std::string sExpression() const override { return std::format("{}", val); }
     std::string toString() const override { return std::format("Value token with val {}", val); };
     constexpr ExpressionType getType() const override { return ExpressionType::Value; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
@@ -65,6 +77,7 @@ struct Value : Expression {
 struct Name : Expression {
     std::string_view literal;
     Name(std::string_view v) : literal{v} {}
+    std::string sExpression() const override { return std::format("\"{}\"", literal); }
     std::string toString() const override { return std::format("Name token with literal {}", literal); };
     constexpr ExpressionType getType() const override { return ExpressionType::Name; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
@@ -74,6 +87,16 @@ struct PrefixOperator : Expression {
     TokenType type;
     Node operand;
     PrefixOperator(TokenType type, Node operand);
+    std::string sExpression() const override {
+        std::string operatorPref;
+        if (type == TokenType::Minus) {
+            operatorPref = "u-";
+        } else {
+            operatorPref = tokenTypeToSymbol(type);
+        }
+        return std::format("({} {})", operatorPref, operand->sExpression());
+    }
+
     constexpr ExpressionType getType() const override { return ExpressionType::PrefixOperator; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
     bool anyOf(std::function<bool(const Expression*)>& pred) const override {
@@ -86,6 +109,9 @@ struct BinaryOperator : Expression {
     Node operand1;
     Node operand2;
     BinaryOperator(TokenType type, Node operand1, Node operand2);
+    std::string sExpression() const override {
+        return std::format("({} {} {})", tokenTypeToSymbol(type), operand1->sExpression(), operand2->sExpression());
+    }
     std::string toString() const override {
         return std::format("BinOp {} - \n\t({}) \n\t({})", tokenTypeToString(type), operand1->toString(),
                            operand2->toString());
@@ -96,14 +122,7 @@ struct BinaryOperator : Expression {
         return pred(this) || operand1->anyOf(pred) || operand2->anyOf(pred);
     }
 };
-/**
-struct PostfixOperator : Expression {
-    TokenType type;
-    Node operand;
-    PostfixOperator(TokenType type, Node operand) : type{type}, operand{std::move(operand)} {}
-    constexpr ExpressionType getType() const override { return ExpressionType::PostfixOperator; }
-};
-*/
+
 struct Statement : Expression {
     bool isStatement() const override { return true; }
 };
@@ -111,6 +130,7 @@ struct Statement : Expression {
 struct ExpressionStatement : Statement {
     Node expression;
     ExpressionStatement(Node expr) : expression{std::move(expr)} {}
+    std::string sExpression() const override { return std::format("{}", expression->sExpression()); }
     std::string toString() const override {
         if (expression)
             return std::format("Statement: \n\t{}", expression->toString());
@@ -130,6 +150,10 @@ struct Assignment : Statement {
     Node right;
     Assignment(std::optional<Token> modifyer, Node left, Node right);
     Assignment(Node left, Node right) : Assignment(std::nullopt, std::move(left), std::move(right)) {}
+    std::string sExpression() const override {
+        return std::format("({}{} = {})", modifyer ? modifyer->lexeme : "", left->sExpression(), right->sExpression());
+    }
+
     std::string toString() const override {
         return std::format("Assignment: \n\t{} {} = {}", modifyer ? modifyer->lexeme : "", left->toString(),
                            right->toString());
@@ -151,6 +175,17 @@ struct Scope : Statement {
         }
         return retVal + "}\n";
     }
+    std::string sExpression() const override {
+        std::string prefix = "(block ";
+        std::string sepatator = "";
+        for (const auto& child : scoped) {
+            prefix += sepatator + child->sExpression();
+            sepatator = " ";
+        }
+        prefix += ")";
+        return prefix;
+    }
+
     constexpr ExpressionType getType() const override { return ExpressionType::Scope; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
     bool anyOf(std::function<bool(const Expression*)>& pred) const override {
@@ -167,6 +202,13 @@ struct If : Statement {
         return std::format("If {} then {} {}", condition->toString(), thenBranch->toString(),
                            std::format("{}", elseBranch ? elseBranch.value()->toString() : "[no else]"));
     }
+    std::string sExpression() const override {
+        if (elseBranch)
+            return std::format("(if {} {} {})", condition->sExpression(), thenBranch->sExpression(),
+                               elseBranch.value()->sExpression());
+        return std::format("(if {} {})", condition->sExpression(), thenBranch->sExpression());
+    }
+
     constexpr ExpressionType getType() const override { return ExpressionType::If; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
     bool anyOf(std::function<bool(const Expression*)>& pred) const override {
@@ -181,6 +223,24 @@ struct Function : Statement {
     std::vector<Node> body;
     bool isVoid = true;
     Function(Node name, std::optional<Node> argList, std::vector<Node> body);
+
+    std::string sExpression() const override {
+        std::string sExpr = "(func ";
+        sExpr += std::format("{} ", name->sExpression());
+        if (argList) {
+            sExpr += argList.value()->sExpression();
+        } else {
+            sExpr += "()";
+        }
+        sExpr += " (block ";
+        std::string separator = "";
+        for (const auto& child : body) {
+            sExpr += separator + child->sExpression();
+            separator = " ";
+        }
+        sExpr += "))";
+        return sExpr;
+    };
 
     std::string toString() const override {
         auto header = std::format("Function {} ({})\n", name->toString(), argList ? argList.value()->toString() : "");
@@ -208,6 +268,10 @@ struct While : Statement {
     std::string toString() const override {
         return std::format("while ({})  {}  \n", condition->toString(), body->toString()) + "}\n";
     }
+
+    std::string sExpression() const override {
+        return std::format("(while {} {})", condition->sExpression(), body->sExpression());
+    }
     constexpr ExpressionType getType() const override { return ExpressionType::While; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
     bool anyOf(std::function<bool(const Expression*)>& pred) const override {
@@ -221,6 +285,9 @@ struct Return : Statement {
     Return() {}
     Return(Node what);
 
+    std::string sExpression() const override {
+        return std::format("(return {})", what ? what.value()->sExpression() : "");
+    }
     std::string toString() const override { return std::format("return {}", what ? (*what)->toString() : ""); }
     constexpr ExpressionType getType() const override { return ExpressionType::Return; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
@@ -234,6 +301,10 @@ struct FunctionCall : Expression {
     std::optional<Node> args{std::nullopt};
 
     FunctionCall(Node name, std::optional<Node> args);
+
+    std::string sExpression() const override {
+        return std::format("({} {})", name->sExpression(), args ? args.value()->sExpression() : "()");
+    }
     std::string toString() const override {
         return std::format("calling function {} with args ({})", name->toString(),
                            args ? args.value()->toString() : "");
@@ -250,6 +321,11 @@ struct CommaList : Expression {
     Node right; // either Comma list or type
 
     CommaList(Node left, Node right);
+
+    std::string sExpression() const override {
+        return std::format("({} {})", left->sExpression(), right->sExpression());
+    }
+
     std::string toString() const override { return std::format("{}, {}", left->toString(), right->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::CommaList; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
@@ -299,6 +375,8 @@ struct CommaList : Expression {
 struct Parenthesised : Expression {
     std::optional<Node> inner;
     Parenthesised(std::optional<Node> inner);
+
+    std::string sExpression() const override { return std::format("({})", inner ? inner.value()->sExpression() : ""); }
     std::string toString() const override { return std::format("( {} )", inner ? inner.value()->toString() : ""); }
     constexpr ExpressionType getType() const override { return ExpressionType::Parenthesised; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;
@@ -312,6 +390,10 @@ struct ArrayIndexing : Expression {
     Node index;
 
     ArrayIndexing(Node array, Node index);
+
+    std::string sExpression() const override {
+        return std::format("([] {} {})", array->sExpression(), index->sExpression());
+    }
     std::string toString() const override { return std::format("{}[{}]", array->toString(), index->toString()); }
     constexpr ExpressionType getType() const override { return ExpressionType::ArrayIndexing; }
     void doAnalysis(SymbolScope& scope, std::uint32_t depth) const;

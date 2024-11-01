@@ -1,6 +1,8 @@
 #pragma once
 #include <string>
 #include <string_view>
+#include <stdexcept>
+
 enum class TokenType {
     Semicolon,
     Plus,
@@ -42,6 +44,69 @@ enum class TokenType {
     Return,
     Sizespec,
 };
+
+inline std::string_view tokenTypeToSymbol(const TokenType type) {
+    switch (type) {
+    case TokenType::Plus:
+        return "+";
+    case TokenType::Star:
+        return "*";
+    case TokenType::Slash:
+        return "/";
+    case TokenType::Minus:
+        return "-";
+    case TokenType::Semicolon:
+        return ";";
+    case TokenType::Left_Parenthesis:
+        return "(";
+    case TokenType::Right_Parenthesis:
+        return ")";
+    case TokenType::Left_Brace:
+        return "[";
+    case TokenType::Right_Brace:
+        return "]";
+    case TokenType::Assignment:
+        return "=";
+    case TokenType::And_Bit:
+        return "&";
+    case TokenType::And_Logical:
+        return "&&";
+    case TokenType::Bitshift_Left:
+        return "<<";
+    case TokenType::Bitshift_Right:
+        return ">>";
+    case TokenType::Comma:
+        return ",";
+    case TokenType::Equals:
+        return "==";
+    case TokenType::Exclamation_Mark:
+        return "!";
+    case TokenType::Larger:
+        return ">";
+    case TokenType::Larger_Equal:
+        return ">=";
+    case TokenType::Smaller:
+        return "<";
+    case TokenType::Smaller_Equal:
+        return "<=";
+    case TokenType::Mod:
+        return "%";
+    case TokenType::Or_Bit:
+        return "|";
+    case TokenType::Or_Logical:
+        return "||";
+    case TokenType::Sizespec:
+        return "@";
+    case TokenType::Tilde:
+        return "~";
+    case TokenType::Uneqal:
+        return "!=";
+    case TokenType::Xor:
+        return "^";
+    default:
+        throw std::runtime_error("unimplemented");
+    };
+}
 
 inline std::string_view tokenTypeToString(const TokenType type) {
     switch (type) {
