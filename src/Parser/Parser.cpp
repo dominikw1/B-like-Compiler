@@ -5,6 +5,7 @@
 namespace ParsingInternals {
 
 using namespace AST;
+
 enum Precedence : unsigned int {
     PREC_NONE,
     PREC_ASSIGNMENT,
@@ -373,13 +374,13 @@ void registerAllSubParsers() {
     subParsers[TokenType::Comma] = {nullptr, &parseCommaList, PREC_ASSIGNMENT, Associativity::Right};
 }
 
-AST::AST Parser::parse() {
+::AST::AST Parser::parse() {
     registerAllSubParsers();
     auto funcs = parseFunctions();
     if (tokens.size() != 0) {
         throw std::runtime_error("Malformed program");
     }
-    return AST::AST{std::move(funcs)};
+    return ::AST::AST{std::move(funcs)};
 }
 
 } // namespace ParsingInternals

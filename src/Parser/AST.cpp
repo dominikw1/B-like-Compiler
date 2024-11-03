@@ -7,7 +7,7 @@
     do {                                                                                                               \
         if (NODE_IS(node, Name)) {                                                                                     \
             auto& lit = NODE_AS_REF(node, Name).literal;                                                               \
-            if (scope.getFunction(std::string(lit))) {                                                                 \
+            if (scope.getFunction(lit)) {                                                                              \
                 throw std::runtime_error("Function found where variable expected");                                    \
             }                                                                                                          \
             scope.getOrTransformVariable(lit);                                                                         \
@@ -19,7 +19,7 @@ void AST::analyze() const {
     SymbolScope scope{};
     for (auto& func : toplevel) {
         auto& funAsFunc = NODE_AS_REF(func, Function);
-        if (scope.getFunction(std::string(NODE_AS_REF(funAsFunc.name, Name).literal))) {
+        if (scope.getFunction(NODE_AS_REF(funAsFunc.name, Name).literal)) {
             throw std::runtime_error("Redefinition of function");
         }
         std::uint32_t argCnt = [&]() -> std::uint32_t {
@@ -130,7 +130,7 @@ AssignmentExpr::AssignmentExpr(Node left, Node right) : left{std::move(left)}, r
 }
 
 void AssignmentExpr::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
-    if (auto name = NODE_IS(left, Name) ? std::optional{std::string(NODE_AS_REF(left, Name).literal)} : std::nullopt) {
+    if (auto name = NODE_IS(left, Name) ? std::optional{NODE_AS_REF(left, Name).literal} : std::nullopt) {
         if (scope.getFunction(*name)) {
             throw std::runtime_error("Cannot assign to function");
         }
@@ -159,7 +159,7 @@ Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
 }
 
 void Assignment::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
-    if (auto name = NODE_IS(left, Name) ? std::optional{std::string(NODE_AS_REF(left, Name).literal)} : std::nullopt) {
+    if (auto name = NODE_IS(left, Name) ? std::optional{NODE_AS_REF(left, Name).literal} : std::nullopt) {
         if (scope.getFunction(*name)) {
             throw std::runtime_error("Cannot declare variable with same name as function");
         }
@@ -381,7 +381,7 @@ void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     // TODO: fix this?
     // name->doAnalysis(*scope.duplicate(), depth);
 
-    if (!NODE_IS(name, Name) || scope.getVariable(std::string(NODE_AS_REF(name, Name).literal))) {
+    if (!NODE_IS(name, Name) || scope.getVariable(NODE_AS_REF(name, Name).literal)) {
         throw std::runtime_error("Only functions can be called");
     }
 

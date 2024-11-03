@@ -6,7 +6,7 @@ add_compile_options(-g)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(LLVM 18.1.8 REQUIRED CONFIG)
+find_package(LLVM 18.1.3 REQUIRED CONFIG)
 include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITIONS})

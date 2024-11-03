@@ -14,4 +14,6 @@ noTest:
 
 .PHONY: bc0
 bc0: 
-	g++ -O3  -std=c++20 bc0.cc src/Parser/Scanner.cpp src/Parser/Parser.cpp src/Parser/AST.cpp -o bc0
+	$(CXX) -march=native -mtune=native -flto=auto -O3 -std=c++23 bc0.cc src/Parser/Scanner.cpp src/Parser/Parser.cpp src/Parser/AST.cpp -o bc0
+
+
