@@ -1,7 +1,7 @@
 #pragma once
+#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <stdexcept>
 
 enum class TokenType {
     Semicolon,
@@ -14,7 +14,6 @@ enum class TokenType {
     Left_Brace,
     Right_Brace,
     Comma,
-    // Dot,
     Slash,
     Star,
     Exclamation_Mark,

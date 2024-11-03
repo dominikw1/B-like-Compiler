@@ -69,7 +69,9 @@ bool Parser::isNextTokenOfType(TokenType type) {
 
 [[nodiscard]]
 static Node parseValue(Parser& parser, Token consumed) {
-    return std::make_unique<Value>(std::stoll(std::string(consumed.lexeme))); // from_chars maybe
+    std::int64_t result;
+    auto [ptr, ec] = std::from_chars(consumed.lexeme.data(), consumed.lexeme.data() + consumed.lexeme.size(), result);
+    return std::make_unique<Value>(result);
 }
 
 [[nodiscard]]

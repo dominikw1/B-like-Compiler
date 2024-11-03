@@ -31,10 +31,10 @@ struct FunctionSymbol {
 };
 
 struct SymbolScope {
-    std::unordered_map<std::string, FunctionSymbol, transparent_string_hash, std::equal_to<>> functions;
-    std::unordered_map<std::string, VariableSymbol, transparent_string_hash, std::equal_to<>> variables;
+    std::unordered_map<std::string_view, FunctionSymbol, transparent_string_hash, std::equal_to<>> functions;
+    std::unordered_map<std::string_view, VariableSymbol, transparent_string_hash, std::equal_to<>> variables;
     SymbolScope* parent = nullptr;
-    std::unordered_set<std::string, transparent_string_hash, std::equal_to<>> undecidedParams;
+    std::unordered_set<std::string_view, transparent_string_hash, std::equal_to<>> undecidedParams;
 
     std::optional<FunctionSymbol> getFunctionAtCurr(std::string_view name) const {
         if (auto foundIt = functions.find(name); foundIt != functions.end()) {
@@ -45,11 +45,11 @@ struct SymbolScope {
 
     template <typename SymbolType> bool raiseParamAtCurr(std::string_view name, SymbolType symbol) {
         if (undecidedParams.contains(name)) {
-            undecidedParams.erase(std::string(name));
+            undecidedParams.erase(name);
             if constexpr (std::is_same<SymbolType, FunctionSymbol>::value) {
-                functions[std::string(name)] = symbol;
+                functions[name] = symbol;
             } else {
-                variables[std::string(name)] = symbol;
+                variables[name] = symbol;
             }
             return true;
         } else {
@@ -119,9 +119,9 @@ struct SymbolScope {
         return scope;
     };
 
-    void addFunctionToToplevel(std::string name, FunctionSymbol symb) {
+    void addFunctionToToplevel(std::string_view name, FunctionSymbol symb) {
         if (parent) {
-            parent->addFunctionToToplevel(std::move(name), std::move(symb));
+            parent->addFunctionToToplevel(name, std::move(symb));
             return;
         }
         if (functions.contains(name)) {

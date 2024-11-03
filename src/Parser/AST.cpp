@@ -1,4 +1,7 @@
 #include "AST.h"
+#include <algorithm>
+#include <execution>
+#include <ranges>
 #include <string>
 #include <unordered_set>
 
@@ -32,8 +35,9 @@ void AST::analyze() const {
             return NODE_AS_REF(NODE_AS_REF(funAsFunc.argList.value(), Parenthesised).inner.value(), CommaList)
                 .getNumInList();
         }();
-        scope.functions[std::string(NODE_AS_REF(funAsFunc.name, Name).literal)] = FunctionSymbol{.numArgs = argCnt};
+        scope.functions[NODE_AS_REF(funAsFunc.name, Name).literal] = FunctionSymbol{.numArgs = argCnt};
     }
+
     for (auto& func : toplevel) {
         func->doAnalysis(*scope.duplicate(), 0);
     }
@@ -187,7 +191,7 @@ void Scope::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
         if (NODE_IS(scopedStatement, Assignment)) {
             auto& assignment = NODE_AS_REF(scopedStatement, Assignment);
             if (assignment.modifyer) { // no param -> new!
-                scope.variables[std::string(NODE_AS_REF(assignment.left, Name).literal)] = {
+                scope.variables[NODE_AS_REF(assignment.left, Name).literal] = {
                     .depthDecl = depth + 1,
                     .type = (assignment.modifyer.value().type == TokenType::Register) ? VariableType::Register
                                                                                       : VariableType::Auto};
@@ -293,7 +297,7 @@ void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
         if (NODE_IS(parenthesised, Name)) {
             const auto& parName = NODE_AS_REF(parenthesised, Name);
             ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(parenthesised, scope);
-            scope.undecidedParams.insert(std::string(parName.literal));
+            scope.undecidedParams.insert(parName.literal);
         } else {
             auto& commaList = NODE_AS_REF(parenthesised, CommaList);
             if (!commaList.assertForAllElems([&](const Node& n) {
@@ -303,12 +307,12 @@ void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
                 throw std::runtime_error("Parameters must be non-function identifiers");
             }
             const auto& names = commaList.getAllNamesOnTopLevel();
-            std::unordered_set<std::string> uniquenessChecker;
+            std::unordered_set<std::string_view> uniquenessChecker;
             //  std::cout << "doing analysis" << std::endl;
             for (auto& n : names) {
-                uniquenessChecker.insert(std::string(n));
+                uniquenessChecker.insert(n);
                 // use the iteration to do proper bookkeeping
-                scope.undecidedParams.insert(std::string(n));
+                scope.undecidedParams.insert(n);
             }
             if (uniquenessChecker.size() != names.size()) {
                 throw std::runtime_error("Parameter names must be unique");
@@ -321,7 +325,7 @@ void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
         if (NODE_IS(st, Assignment)) {
             auto& assignment = NODE_AS_REF(st, Assignment);
             if (assignment.modifyer) { // no param -> new!
-                scope.variables[std::string(NODE_AS_REF(assignment.left, Name).literal)] = {
+                scope.variables[NODE_AS_REF(assignment.left, Name).literal] = {
                     .depthDecl = depth,
                     .type = (assignment.modifyer.value().type == TokenType::Register) ? VariableType::Register
                                                                                       : VariableType::Auto};
@@ -402,7 +406,7 @@ void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
         std::cout << s.first << std::endl;
     }
 
-    std::string funcName{NODE_AS_REF(name, Name).literal};
+    std::string_view funcName{NODE_AS_REF(name, Name).literal};
     if (auto func = scope.getOrTransformFunction(funcName, argCnt); func) {
         if (argCnt != func->numArgs) {
             throw std::runtime_error(
@@ -426,9 +430,9 @@ void CommaList::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     right->doAnalysis(*scope.duplicate(), depth);
 }
 Parenthesised::Parenthesised(std::optional<Node> inner) : inner{std::move(inner)} {
-    // if (!this->inner) {
-    //   throw std::runtime_error("Empty parenthesised expression.");
-    //}
+    if (this->inner && !this->inner.value()) {
+        throw std::runtime_error("Nullptr in parenthesised expression.");
+    }
 }
 void Parenthesised::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
     if (inner)
