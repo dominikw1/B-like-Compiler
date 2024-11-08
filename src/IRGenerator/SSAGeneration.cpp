@@ -1,525 +1,267 @@
 #include "SSAGeneration.h"
-#include "../Parser/AST.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include <vector>
+#include "ValueTracker.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Verifier.h"
 
-void SSAGenerator::writeVariable(std::string_view var, const llvm::BasicBlock* block, llvm::Value* value) {
-    currentDef[var][block] = value;
-}
+namespace {
 
-llvm::Value* SSAGenerator::reduceTrivialPhi(llvm::PHINode* phi) {
-    llvm::Value* uniqueVal = phi->hasConstantValue();
-    if (!uniqueVal) {
-        return phi;
+std::vector<std::string_view> extractParameterNamesFromFunction(const AST::Function& function) {
+    const auto& paramNode = function.argList;
+    if (!paramNode) {
+        return {};
     }
+    assert(paramNode.value()->getType() == AST::ExpressionType::Parenthesised);
+    AST::Parenthesised& paren = static_cast<AST::Parenthesised&>(*paramNode.value());
 
-    std::vector<llvm::Value*> users;
-    for (auto* user : phi->users()) {
-        if (user != phi)
-            users.push_back(user);
-    }
-    auto phiIt = phi->getIterator();
-    llvm::ReplaceInstWithValue(phiIt, uniqueVal);
-    for (auto* user : users) {
-        if (user && llvm::isa<llvm::PHINode>(user)) {
-            reduceTrivialPhi(llvm::cast<llvm::PHINode>(user));
-        }
-    }
-    return uniqueVal;
-}
+    assert(paren.inner && paren.inner.value());
+    assert(paren.inner.value()->getType() == AST::ExpressionType::Name ||
+           paren.inner.value()->getType() == AST::ExpressionType::CommaList);
 
-llvm::Value* SSAGenerator::addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block) {
-    for (auto* pred : llvm::predecessors(block)) {
-        phi->addIncoming(readVariable(var, pred), pred);
-    }
-    return reduceTrivialPhi(phi);
-}
-
-void SSAGenerator::sealBlock(llvm::BasicBlock* block) {
-    for (auto var : incompletePhis[block]) {
-        addPhiOperands(var.first, llvm::cast<llvm::PHINode>(var.second), block);
-    }
-    sealed.insert(block);
-}
-
-llvm::Value* SSAGenerator::readFromPtrIfAlloca(llvm::Value* v) {
-    if (llvm::isa<llvm::AllocaInst>(v)) {
-        return builder->CreateLoad(llvm::Type::getInt64Ty(*context), v);
-    }
-    return v;
-}
-
-llvm::Value* SSAGenerator::readVariableRecursive(std::string_view var, llvm::BasicBlock* block) {
-    llvm::Value* val{};
-    std::cout << "reading recursively" << var << std::endl;
-    if (!sealed.contains(block)) {
-        std::cout << "incomplete" << std::endl;
-        // Incomplete CFG
-        val = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), 0, "incompletePhi");
-        auto* insertPlace = block->getFirstNonPHI();
-        if (insertPlace) {
-            llvm::cast<llvm::Instruction>(val)->insertBefore(insertPlace);
-        } else {
-            builder->SetInsertPoint(block);
-            builder->Insert(val);
-            builder->SetInsertPoint(currBlock);
-        }
-        incompletePhis[block][var] = val;
-        std::cout << "Added proxy phi in block for " << var << std::endl;
-        //  currBlock->dump();
-    } else if (llvm::pred_size(block) == 1) {
-        std::cout << "one pred" << std::endl;
-        // Optimize the common case of one predecessor : No phi needed
-        val = readVariable(var, *llvm::pred_begin(block));
+    if (paren.inner.value()->getType() == AST::ExpressionType::Name) {
+        return {static_cast<AST::Name&>(*paren.inner.value()).literal};
     } else {
-        std::cout << "new phi" << std::endl;
-        auto* phi = llvm::PHINode::Create(llvm::Type::getInt64Ty(*context), llvm::pred_size(block));
-        // TODO: check if splitting would not be smarter. Can this approach cause problems?
-        auto* insertPlace = block->getFirstNonPHI();
-        if (insertPlace) {
-            std::cout << "There are instrs here" << std::endl;
-            phi->insertBefore(insertPlace);
-        } else {
-            std::cout << "First instr in block" << std::endl;
-            builder->SetInsertPoint(block);
-            builder->Insert(phi);
-            builder->SetInsertPoint(currBlock);
-        }
-        std::cout << "now wriitng var" << std::endl;
-        writeVariable(var, block, phi);
-        std::cout << "adding phi operands" << std::endl;
-        val = addPhiOperands(var, phi, block);
-        std::cout << "done";
-    }
-    writeVariable(var, block, val);
-    return val;
-}
-
-llvm::Value* SSAGenerator::readVariable(std::string_view var, llvm::BasicBlock* block) {
-    std::cout << "reading " << var << std::endl;
-    if (currentDef[var].contains(block)) {
-        return currentDef[var][block];
-    }
-    return readVariableRecursive(var, block);
-}
-
-llvm::BasicBlock* SSAGenerator::createNewBasicBlock(llvm::Function* parentFunction, std::string_view name) {
-    return llvm::BasicBlock::Create(*context, name, parentFunction);
-}
-
-void SSAGenerator::switchToBlock(llvm::BasicBlock* newBlock) {
-    currBlock = newBlock;
-    builder->SetInsertPoint(currBlock);
-}
-
-llvm::Value* SSAGenerator::codegenAndLogical(const AST::Expression& left, const AST::Expression& right) {
-    auto* falseBlock = createNewBasicBlock(currFunc, "noShortCircuit");
-    auto* resultBlock = createNewBasicBlock(currFunc, "boolExprResult");
-
-    llvm::Value* leftVal = codegenExpression(left);
-    llvm::Value* leftVali64 = builder->CreateIntCast(leftVal, llvm::Type::getInt64Ty(*context), true);
-    llvm::Value* leftValBoolean = builder->CreateICmpNE(
-        leftVali64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
-    llvm::Value* branchToFalse = builder->CreateCondBr(leftValBoolean, resultBlock, falseBlock);
-
-    auto* trueBlock = currBlock;
-    switchToBlock(falseBlock);
-    sealBlock(falseBlock);
-
-    llvm::Value* rightVal = codegenExpression(right);
-    auto* blockAfterRightValGeneration = currBlock;
-    llvm::Value* rightVali64 = builder->CreateIntCast(rightVal, llvm::Type::getInt64Ty(*context), true);
-    llvm::Value* rightValBoolean = builder->CreateICmpNE(
-        rightVali64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0), "rightValBoolean");
-
-    llvm::Value* branchToResult = builder->CreateBr(resultBlock);
-    switchToBlock(resultBlock);
-    sealBlock(resultBlock);
-
-    auto exprResult = llvm::PHINode::Create(llvm::Type::getInt1Ty(*context), 2, "boolExprResultNode");
-    builder->Insert(exprResult);
-    exprResult->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context), 1), trueBlock);
-    exprResult->addIncoming(rightValBoolean, blockAfterRightValGeneration);
-    return exprResult;
-}
-
-llvm::Value* SSAGenerator::codegenBinaryOp(const AST::Expression& expr) {
-    auto& binExp = static_cast<const AST::BinaryOperator&>(expr);
-    // special handling binops
-    switch (binExp.type) {
-    case TokenType::And_Logical:
-        return codegenAndLogical(*binExp.operand1, *binExp.operand2);
-    default:
-        break; // handled later
-    }
-
-    auto* left = builder->CreateIntCast(codegenExpression(*binExp.operand1), llvm::Type::getInt64Ty(*context), true);
-    auto* right = builder->CreateIntCast(codegenExpression(*binExp.operand2), llvm::Type::getInt64Ty(*context), true);
-    switch (binExp.type) {
-    case TokenType::And_Bit:
-        return builder->CreateAnd(left, right);
-    case TokenType::Or_Bit:
-        return builder->CreateOr(left, right);
-    case TokenType::Xor:
-        return builder->CreateXor(left, right);
-    case TokenType::Bitshift_Left:
-        return builder->CreateShl(left, right);
-    case TokenType::Bitshift_Right:
-        return builder->CreateAShr(left, right);
-    case TokenType::Plus:
-        return builder->CreateAdd(left, right);
-    case TokenType::Minus:
-        return builder->CreateSub(left, right);
-    case TokenType::Star: // if deref it would be unop not bin op
-        return builder->CreateMul(left, right);
-    case TokenType::Slash:
-        return builder->CreateSDiv(left, right);
-    case TokenType::Equals:
-        return builder->CreateICmpEQ(left, right);
-    case TokenType::Uneqal:
-        return builder->CreateICmpNE(left, right);
-    case TokenType::Larger:
-        return builder->CreateICmpSGT(left, right);
-    case TokenType::Larger_Equal:
-        return builder->CreateICmpSGE(left, right);
-    case TokenType::Smaller:
-        return builder->CreateICmpSLT(left, right);
-    case TokenType::Smaller_Equal:
-        return builder->CreateICmpSLE(left, right);
-    default:
-        throw std::runtime_error("Unimplemented binop for codegen");
-    }
-}
-
-llvm::Value* SSAGenerator::codegenUnaryOp(const AST::Expression& expr) {
-    auto& unExpr = static_cast<const AST::PrefixOperator&>(expr);
-    auto* val = builder->CreateIntCast(codegenExpression(*unExpr.operand), llvm::Type::getInt64Ty(*context), true);
-    switch (unExpr.type) {
-    case TokenType::Minus:
-        return builder->CreateSub(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0), val);
-    case TokenType::Tilde:
-        return builder->CreateNot(val);
-    case TokenType::Exclamation_Mark:
-        return builder->CreateICmpEQ(val, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0));
-    default:
-        throw std::runtime_error("unimplemented unop");
-    }
-}
-
-llvm::Value* SSAGenerator::codegenFunctionCall(const AST::Expression& expr) {
-    const auto& fCallExpr = static_cast<const AST::FunctionCall&>(expr);
-    const auto& name = static_cast<const AST::Name&>(*fCallExpr.name).literal;
-    std::vector<llvm::Value*> args{};
-    if (fCallExpr.args && static_cast<const AST::Parenthesised&>(*fCallExpr.args.value()).inner) {
-        const auto* argNode = static_cast<const AST::Parenthesised&>(*fCallExpr.args.value()).inner.value().get();
-
-        while (argNode) {
-            if (argNode->getType() == AST::ExpressionType::CommaList) {
-                const auto& list = static_cast<const AST::CommaList&>(*argNode);
-                args.push_back(codegenExpression(*list.left));
-                argNode = list.right.get();
+        std::vector<std::string_view> names;
+        AST::Node* curr = &paren.inner.value();
+        while (true) {
+            assert((*curr)->getType() == AST::ExpressionType::Name ||
+                   (*curr)->getType() == AST::ExpressionType::CommaList);
+            if ((*curr)->getType() == AST::ExpressionType::Name) {
+                names.push_back(static_cast<const AST::Name&>(**curr).literal);
+                break;
             } else {
-                args.push_back(codegenExpression(*argNode));
+                AST::CommaList& list = static_cast<AST::CommaList&>(**curr);
+                assert(list.left->getType() == AST::ExpressionType::Name);
+                names.push_back(static_cast<const AST::Name&>(*list.left).literal);
+                curr = &list.right;
+            }
+        }
+        return names;
+    }
+}
+
+class SSAGenerator {
+  private:
+    std::unique_ptr<llvm::LLVMContext> context = std::make_unique<llvm::LLVMContext>();
+    std::unique_ptr<llvm::Module> module = std::make_unique<llvm::Module>("main_module", *context);
+    llvm::IRBuilder<> builder{*context};
+    llvm::Function* currFunc = nullptr;
+    llvm::BasicBlock* currBlock = nullptr;
+    std::unordered_set<std::string_view> undecidedFunctionReturnTypes{};
+    ValueTracker valueTracker{*context};
+
+    llvm::Value* generateBinaryOperation(const AST::BinaryOperator& binOp) {
+        switch (binOp.type) {
+        case TokenType::Plus:
+            return builder.CreateAdd(generateExpression(*binOp.operand1), generateExpression(*binOp.operand2));
+        case TokenType::Minus:
+            return builder.CreateSub(generateExpression(*binOp.operand1), generateExpression(*binOp.operand2));
+        }
+        throw std::runtime_error("Unimplemented IR gen of binop");
+    }
+
+    llvm::Constant* fromInt(std::int64_t val, llvm::Type* type = nullptr) {
+        if (!type)
+            return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), val, true);
+        auto* intType = llvm::cast<llvm::IntegerType>(type);
+        return llvm::ConstantInt::get(intType, val, true);
+    }
+
+    llvm::Value* generateUnaryOperation(const AST::PrefixOperator& unOp) {
+        llvm::Value* inner = generateExpression(*unOp.operand);
+        switch (unOp.type) {
+        case TokenType::Minus:
+            return builder.CreateNeg(inner);
+        case TokenType::Tilde:
+            return builder.CreateNot(inner);
+        case TokenType::Exclamation_Mark:
+            return builder.CreateICmpEQ(inner, fromInt(0, inner->getType()));
+        }
+        throw std::runtime_error("Unimplemented IR gen of unop");
+    }
+
+    llvm::Value* codegenFunctionCall(const AST::FunctionCall& expr) {
+        const auto& name = static_cast<const AST::Name&>(*expr.name).literal;
+        std::vector<llvm::Value*> args{};
+        if (expr.args) {
+            assert(expr.args.value());
+            const auto* argNode = static_cast<const AST::Parenthesised&>(*expr.args.value()).inner.value().get();
+            while (argNode) {
+                if (argNode->getType() == AST::ExpressionType::CommaList) {
+                    const auto& list = static_cast<const AST::CommaList&>(*argNode);
+                    args.push_back(generateExpression(*list.left));
+                    argNode = list.right.get();
+                } else {
+                    args.push_back(generateExpression(*argNode));
+                    break;
+                }
+            }
+        }
+
+        auto* calledFunc = module->getFunction(name);
+        if (!calledFunc) {
+            // implicit function declaration
+            size_t numParams = args.size();
+            std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
+            undecidedFunctionReturnTypes.insert(name);
+            auto type = llvm::FunctionType::get(llvm::Type::getInt64Ty(*context), parameters, false);
+            calledFunc = llvm::cast<llvm::Function>(module->getOrInsertFunction(name, type).getCallee());
+        }
+        return builder.CreateCall(calledFunc, args);
+    }
+
+    llvm::Value* createAlloca(llvm::Type* type) {
+        builder.SetInsertPoint(&currFunc->getEntryBlock());
+        auto* alloca = builder.CreateAlloca(type);
+        builder.SetInsertPoint(currBlock);
+        return alloca;
+    }
+
+    llvm::Value* generateDeclaration(const AST::Assignment& decl) {
+        assert(decl.modifyer);
+        assert(decl.left->getType() == AST::ExpressionType::Name);
+        std::string_view name = static_cast<const AST::Name&>(*decl.left).literal;
+        auto* rightSide = generateExpression(*decl.right);
+        if (decl.modifyer.value().type == TokenType::Auto) {
+            auto* alloca = createAlloca(llvm::Type::getInt64Ty(*context));
+            builder.CreateStore(rightSide, alloca);
+            valueTracker.writeVariable(name, currBlock, alloca);
+        } else {
+            valueTracker.writeVariable(name, currBlock, rightSide);
+        }
+        return rightSide;
+    }
+
+    llvm::Value* generateExpression(const AST::Expression& expr) {
+        switch (expr.getType()) {
+        case AST::ExpressionType::Value:
+            return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), static_cast<const AST::Value&>(expr).val,
+                                          true);
+        case AST::ExpressionType::BinaryOperator:
+            return generateBinaryOperation(static_cast<const AST::BinaryOperator&>(expr));
+
+        case AST::ExpressionType::PrefixOperator:
+            return generateUnaryOperation(static_cast<const AST::PrefixOperator&>(expr));
+        case AST::ExpressionType::Parenthesised: {
+            const AST::Parenthesised& par = static_cast<const AST::Parenthesised&>(expr);
+            if (par.inner) {
+                return generateExpression(*par.inner.value());
+            }
+            throw std::runtime_error("empty parentheses expr");
+        }
+        case AST::ExpressionType::FunctionCall:
+            return codegenFunctionCall(static_cast<const AST::FunctionCall&>(expr));
+        case AST::ExpressionType::Name: {
+            llvm::Value* val = valueTracker.readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(val)) {
+                return builder.CreateLoad(llvm::Type::getInt64Ty(*context), alloca);
+            }
+            return val;
+        }
+        case AST::ExpressionType::AssignmentExpr: {
+            const AST::AssignmentExpr& assExpr = static_cast<const AST::AssignmentExpr&>(expr);
+            if (assExpr.left->getType() != AST::ExpressionType::Name) {
+                throw std::runtime_error("Unimplemented left side of assignment");
+            }
+            std::string_view assignedVar = static_cast<const AST::Name&>(*assExpr.left).literal;
+            llvm::Value* rightSide = generateExpression(*assExpr.right);
+            // this variable has to have been declared already
+            llvm::Value* currVal = valueTracker.readVariable(assignedVar, currBlock);
+            if (llvm::AllocaInst* alloca = dyn_cast<llvm::AllocaInst>(currVal)) {
+                builder.CreateStore(rightSide, alloca);
+            } else {
+                valueTracker.writeVariable(assignedVar, currBlock, rightSide);
+            }
+            return rightSide;
+        }
+        }
+        throw std::runtime_error(std::format("IR gen for expression {} unimplemented", expr.toString()));
+    }
+
+    llvm::Value* createSextIfNecessary(llvm::Value* castee, llvm::Type* type) {
+        if (castee->getType() == type)
+            return castee;
+        return builder.CreateSExt(castee, type);
+    }
+
+    bool generateStatement(const AST::Statement& statement) {
+        switch (statement.getType()) {
+        case AST::ExpressionType::Return: {
+            const AST::Return& returnStatement = static_cast<const AST::Return&>(statement);
+            if (returnStatement.what) {
+                builder.CreateRet(createSextIfNecessary(generateExpression(*returnStatement.what.value()),
+                                                        llvm::Type::getInt64Ty(*context)));
+            } else {
+                builder.CreateRetVoid();
+            }
+            return false;
+        }
+        case AST::ExpressionType::ExpressionStatement: {
+            const AST::ExpressionStatement& exprSt = static_cast<const AST::ExpressionStatement&>(statement);
+            generateExpression(*exprSt.expression);
+            return true;
+        }
+        case AST::ExpressionType::Assignment:
+            return generateDeclaration(static_cast<const AST::Assignment&>(statement));
+        default:
+            throw std::runtime_error("Unknown statement type while generating IR for statement");
+        }
+    }
+
+    void generateFunction(const AST::Function& func) {
+        std::string_view funcName = static_cast<const AST::Name&>(*func.name).literal;
+        auto paramNames = extractParameterNamesFromFunction(func);
+        size_t numParams = paramNames.size();
+        if (undecidedFunctionReturnTypes.contains(funcName)) {
+            if (func.isVoid) {
+                std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
+                auto correctType = llvm::FunctionType::get(llvm::Type::getVoidTy(*context), parameters, false);
+                module->getFunction(funcName)->mutateType(correctType);
+            }
+        }
+        if (auto* func = module->getFunction(funcName)) {
+            std::cerr << "function already exists...\n";
+        }
+        std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
+        auto type = llvm::FunctionType::get(
+            !func.isVoid ? llvm::Type::getInt64Ty(*context) : llvm::Type::getVoidTy(*context), parameters, false);
+        llvm::FunctionCallee funcCallee = module->getOrInsertFunction(funcName, type);
+
+        currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
+        currBlock = llvm::BasicBlock::Create(*context, "entry", currFunc);
+
+        auto argIt = currFunc->arg_begin();
+        for (size_t i = 0; i < numParams; ++i) {
+            valueTracker.writeVariable(paramNames.at(i), currBlock, argIt);
+            (argIt++)->setName(paramNames.at(i));
+        }
+
+        builder.SetInsertPoint(currBlock);
+        for (auto& statement : func.body) {
+            assert(statement->isStatement());
+            if (!generateStatement(static_cast<AST::Statement&>(*statement))) {
+                // terminator in middle of function -> no need to gen further
                 break;
             }
         }
+        // generateStatement(func.body[0]);
     }
 
-    auto* F = module->getFunction(name);
-    if (!F)
-        throw std::runtime_error("Failing to get function from module at at codegenFunctionCall!!\n");
-
-    return builder->CreateCall(F, args);
-}
-
-llvm::Value* SSAGenerator::codegenExpression(const AST::Expression& expr) {
-    switch (expr.getType()) {
-    case AST::ExpressionType::Value:
-        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), static_cast<const AST::Value&>(expr).val);
-    case AST::ExpressionType::BinaryOperator:
-        return codegenBinaryOp(expr);
-    case AST::ExpressionType::Name:
-        return readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
-    case AST::ExpressionType::Parenthesised:
-        if (auto& inner = static_cast<const AST::Parenthesised&>(expr).inner) {
-            return codegenExpression(*inner.value());
-        } else {
-            throw std::runtime_error("No parentheses contents...");
-        }
-    case AST::ExpressionType::PrefixOperator:
-        return codegenUnaryOp(expr);
-    case AST::ExpressionType::FunctionCall:
-        return codegenFunctionCall(expr);
-    case AST::ExpressionType::AssignmentExpr:
-        return codegenAssignmentExpr(static_cast<const AST::AssignmentExpr&>(expr));
-    default:
-        throw std::runtime_error(std::format("Not implemented expr {}", expr.toString()));
-    }
-}
-void SSAGenerator::codegenExprStatement(const AST::ExpressionStatement& statement) {
-    codegenExpression(*statement.expression);
-}
-
-llvm::Value* SSAGenerator::codegenAssignmentExpr(const AST::AssignmentExpr& assignmentExpr) {
-    if (assignmentExpr.left->getType() != AST::ExpressionType::Name) {
-        throw std::runtime_error("cannot deal with this yet");
-    }
-
-    auto varName = static_cast<const AST::Name&>(*assignmentExpr.left).literal;
-    auto* expr = codegenExpression(*assignmentExpr.right);
-
-    // maybe store as well?
-    writeVariable(varName, currBlock, expr);
-    return expr;
-}
-
-void SSAGenerator::codegenAssignment(const AST::Assignment& assignmentStatement) {
-    if (assignmentStatement.left->getType() != AST::ExpressionType::Name) {
-        return;
-    }
-
-    auto varName = static_cast<const AST::Name&>(*assignmentStatement.left).literal;
-    auto* expr = codegenExpression(*assignmentStatement.right);
-
-    if (assignmentStatement.modifyer && assignmentStatement.modifyer.value().type == TokenType::Auto) {
-        assert(assignmentStatement.left->getType() == AST::ExpressionType::Name);
-        auto* allocaInst = builder->CreateAlloca(llvm::Type::getInt64Ty(*context));
-        builder->CreateStore(expr, allocaInst);
-    }
-
-    // maybe store as well?
-    writeVariable(varName, currBlock, expr);
-}
-
-void SSAGenerator::codegenStatementSeq(const CFG::BasicBlock* currCFG) {
-    builder->SetInsertPoint(currBlock);
-    for (auto& statement : currCFG->extraInfo) {
-        switch (statement->getType()) {
-        case AST::ExpressionType::ExpressionStatement:
-            codegenExprStatement(static_cast<const AST::ExpressionStatement&>(*statement));
-            break;
-        case AST::ExpressionType::Assignment:
-            codegenAssignment(static_cast<const AST::Assignment&>(*statement));
-            break;
-        case AST::ExpressionType::Return:
-            if (auto& retExpr = static_cast<const AST::Return*>(statement)->what) {
-                codegenReturnSt(retExpr->get());
-            } else {
-                codegenReturnSt(nullptr);
-            }
-            break;
-        default:
-            throw std::runtime_error("Not implemented codegenning");
+  public:
+    SSAGenerator(AST::AST ast) {
+        for (const auto& func : ast.getTopLevel()) {
+            assert(func->getType() == AST::ExpressionType::Function);
+            generateFunction(static_cast<const AST::Function&>(*func));
         }
     }
-    codegenBlock(currCFG->posterior.at(0).get());
-}
+    IntermediateRepresentation releaseIR() { return IntermediateRepresentation{std::move(context), std::move(module)}; }
+};
 
-bool lastInstrInBlockIsTerminator(const llvm::BasicBlock* block) {
-    return block->size() != 0 && block->rbegin()->isTerminator();
-}
+} // namespace
 
-void SSAGenerator::codegenWhile(const CFG::BasicBlock* whileBlockCFG) {
-    auto conditionBlock = createNewBasicBlock(currFunc, "conditionBlock");
-    auto whileBlock = createNewBasicBlock(currFunc, "whileBlock");
-    auto postWhileBlock = createNewBasicBlock(currFunc, "postWhileBlock");
-    builder->CreateBr(conditionBlock);
-
-    switchToBlock(conditionBlock);
-    auto* conditionValue = codegenExpression(*whileBlockCFG->extraInfo[0]);
-    auto* conditionValueAsI64 =
-        builder->CreateIntCast(conditionValue, llvm::Type::getInt64Ty(*context), true, "castToI64");
-    auto* conditionValueNeq0 = builder->CreateICmpNE(
-        conditionValueAsI64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "whileCondition");
-
-    builder->CreateCondBr(conditionValueNeq0, whileBlock, postWhileBlock);
-
-    switchToBlock(whileBlock);
-    sealBlock(whileBlock);
-    codegenBlock(whileBlockCFG->posterior[0].get());
-
-    if (!lastInstrInBlockIsTerminator(currBlock))
-        builder->CreateBr(conditionBlock);
-
-    sealBlock(conditionBlock);
-
-    switchToBlock(postWhileBlock);
-    sealBlock(postWhileBlock);
-    codegenBlock(whileBlockCFG->posterior[1].get());
-}
-
-void SSAGenerator::codegenIf(const CFG::BasicBlock* ifBlock) {
-    auto* conditionValue = codegenExpression(*ifBlock->extraInfo[0]);
-    auto* conditionValueAsI64 =
-        builder->CreateIntCast(conditionValue, llvm::Type::getInt64Ty(*context), true, "castToI64");
-    auto* conditionValueNeq0 = builder->CreateICmpNE(
-        conditionValueAsI64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "ifCondition");
-    auto* thenBranchBlock = createNewBasicBlock(currFunc, "thenBranch");
-    llvm::BasicBlock* elseBranchBlock = nullptr;
-    if (ifBlock->posterior[1]) {
-        elseBranchBlock = createNewBasicBlock(currFunc, "elseBranch");
-        builder->CreateCondBr(conditionValueNeq0, thenBranchBlock, elseBranchBlock);
-    }
-
-    auto* postIfBlock = createNewBasicBlock(currFunc, "postIf");
-    if (!elseBranchBlock) {
-        builder->CreateCondBr(conditionValueNeq0, thenBranchBlock, postIfBlock);
-    }
-
-    switchToBlock(thenBranchBlock);
-    sealBlock(thenBranchBlock);
-    codegenBlock(ifBlock->posterior[0].get());
-
-    if (!lastInstrInBlockIsTerminator(currBlock))
-        builder->CreateBr(postIfBlock);
-
-    if (elseBranchBlock) {
-        switchToBlock(elseBranchBlock);
-        sealBlock(elseBranchBlock);
-        codegenBlock(ifBlock->posterior[1].get());
-        if (!lastInstrInBlockIsTerminator(currBlock))
-            builder->CreateBr(postIfBlock);
-        sealBlock(elseBranchBlock);
-    }
-
-    if (llvm::pred_size(postIfBlock) == 0) {
-        llvm::DeleteDeadBlock(postIfBlock);
-    } else {
-        switchToBlock(postIfBlock);
-        sealBlock(postIfBlock);
-        codegenBlock(ifBlock->posterior[2].get());
-    }
-}
-
-void SSAGenerator::codegenReturnSt(const AST::Expression* retVal) {
-    if (retVal) {
-        builder->CreateRet(builder->CreateIntCast(codegenExpression(*retVal), llvm::Type::getInt64Ty(*context), true));
-    } else {
-        builder->CreateRetVoid();
-    }
-}
-
-void SSAGenerator::codegenBlock(const CFG::BasicBlock* currCFG) {
-    builder->SetInsertPoint(currBlock);
-    switch (currCFG->type) {
-    case CFG::BlockType::FunctionPrologue:
-        // params dealt with in parent function
-        codegenBlock(currCFG->posterior.at(0).get());
-        break;
-    case CFG::BlockType::Normal:
-        codegenStatementSeq(currCFG);
-        break;
-    case CFG::BlockType::FunctionEpilogue:
-        break;
-    case CFG::BlockType::Return:
-        if (currBlock->empty() ||
-            !currBlock->rbegin()->isTerminator()) // this is conservatively added at too many places, if we already have
-                                                  // a terminator then just ignore
-            codegenReturnSt(currCFG->extraInfo.at(0));
-        break;
-    case CFG::BlockType::If:
-        codegenIf(currCFG);
-        break;
-    case CFG::BlockType::While:
-        codegenWhile(currCFG);
-        break;
-    default:
-        throw std::runtime_error("Not implemented block type");
-    }
-}
-
-std::vector<std::string_view> extractParameterNamesFromFunction(const CFG::BasicBlock* prelude) {
-    auto paramNode = prelude->extraInfo[0];
-    if (paramNode == nullptr || !static_cast<const AST::Parenthesised*>(paramNode)->inner)
-        return {};
-    // if its not a nullptr it is a parenthesised
-    paramNode = static_cast<const AST::Parenthesised*>(paramNode)->inner.value().get();
-    if (paramNode->getType() == AST::ExpressionType::Name) {
-        return {static_cast<const AST::Name*>(paramNode)->literal};
-    }
-    auto* params = static_cast<const AST::CommaList*>(paramNode);
-    return params->getAllNamesOnTopLevel();
-}
-
-void SSAGenerator::codegenFunction(std::string_view name, const CFG::BasicBlock* prelude) {
-    auto paramNames = extractParameterNamesFromFunction(prelude);
-    size_t numParams = paramNames.size();
-    std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
-    auto type =
-        llvm::FunctionType::get(CFG::doesFunctionHaveNonVoidReturnType(prelude) ? llvm::Type::getInt64Ty(*context)
-                                                                                : llvm::Type::getVoidTy(*context),
-                                parameters, false);
-    llvm::FunctionCallee funcCallee = this->module->getOrInsertFunction(name, type);
-    currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
-    auto* entryBlock = createNewBasicBlock(currFunc, "entry");
-    currBlock = entryBlock;
-
-    auto argIt = currFunc->arg_begin();
-    for (size_t i = 0; i < numParams; ++i) {
-        writeVariable(paramNames.at(i), currBlock, argIt);
-        (argIt++)->setName(paramNames.at(i));
-    }
-
-    builder->SetInsertPoint(currBlock);
-
-    sealBlock(entryBlock);
-    codegenBlock(prelude);
-
-    if (!CFG::doesFunctionHaveNonVoidReturnType(prelude)) {
-        // add empty ret if it is not there already
-        if (currBlock->size() != 0) {
-            if (!currBlock->rbegin()->isTerminator()) {
-                builder->CreateRetVoid();
-            }
-        } else {
-            builder->CreateRetVoid();
-        }
-    }
-
-    // currFunc->dump();
-    if (llvm::verifyFunction(*currFunc, &llvm::errs())) {
-        throw std::runtime_error("Invalid function");
-    }
-}
-
-void SSAGenerator::addPrintToMain() {
-    for (auto& function : *module) {
-        if (function.getName() == "main") {
-
-            llvm::Type* intType = llvm::Type::getInt32Ty(*context);
-
-            // Declare C standard library printf
-            std::vector<llvm::Type*> printfArgsTypes(
-                {llvm::PointerType::get(*context, 0), llvm::Type::getInt32Ty(*context)});
-
-            llvm::FunctionType* printfType = llvm::FunctionType::get(intType, printfArgsTypes, true);
-
-            auto printfFunc = module->getOrInsertFunction("printf", printfType);
-
-            llvm::Value* str = builder->CreateGlobalStringPtr("%d\n", "printf_format_str");
-
-            builder->SetInsertPoint(&*function.back().rbegin());
-
-            for (auto& bb : function) {
-                for (auto& instr : bb) {
-                    if (auto* retInstr = llvm::dyn_cast<llvm::ReturnInst>(&instr)) {
-                        std::cout << "found a ret in main" << std::endl;
-                        auto* returnValue = retInstr->getReturnValue();
-                        std::vector<llvm::Value*> argsV{};
-                        if (!returnValue) {
-                            argsV = {str, llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), 0, true)};
-                        } else {
-                            auto* printRet =
-                                builder->CreateIntCast(returnValue, llvm::Type::getInt32Ty(*context), true);
-                            argsV = {str, printRet};
-                        }
-                        builder->CreateCall(printfFunc, argsV, "callPrintf");
-                    }
-                }
-            }
-
-            return;
-        }
-    }
+IntermediateRepresentation generateIR(AST::AST ast) {
+    SSAGenerator ssaGen{std::move(ast)};
+    auto IR = ssaGen.releaseIR();
+    if (llvm::verifyModule(*IR.module, &llvm::errs()))
+        throw std::runtime_error("Invalid IR!");
+    return IR;
 }

@@ -16,14 +16,6 @@ namespace ParsingInternals {
 enum Precedence : unsigned int;
 
 class Parser {
-
-    // void assertNextTokenIsOfType(TokenType type, auto tokens) {
-    //     if (auto nextToken = getNextToken(tokens); nextToken.type != type) {
-    //         throw std::runtime_error(std::format("Expected token type {}, found type {}", tokenTypeToString(type),
-    //                                              tokenTypeToString(nextToken.type)));
-    //     }
-    // }
-
     std::span<const Token> tokens;
 
   public:
