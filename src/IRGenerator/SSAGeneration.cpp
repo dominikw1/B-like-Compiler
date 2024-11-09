@@ -49,6 +49,42 @@ class SSAGenerator {
     std::unordered_set<std::string_view> undecidedFunctionReturnTypes{};
     ValueTracker valueTracker{*context};
 
+    struct SizespecInfo {
+        llvm::Value* pointerRes;
+        llvm::Type* pointerType;
+    };
+
+    constexpr bool isSizespec(const AST::ArrayIndexing& arrayIndexing) {
+        if (arrayIndexing.index->getType() == AST::ExpressionType::BinaryOperator) {
+            const auto& binop = static_cast<const AST::BinaryOperator&>(*arrayIndexing.index);
+            if (binop.type == TokenType::Sizespec) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    SizespecInfo handleSizespec(llvm::Value* arrayPointer, const AST::BinaryOperator& sizespec) {
+        assert(sizespec.operand2->getType() == AST::ExpressionType::Value);
+        std::uint8_t sizespecSize = static_cast<const AST::Value&>(*sizespec.operand2).val;
+        llvm::Value* scalee = generateExpression(*sizespec.operand1);
+        llvm::Type* type = [sizespecSize, &context = *context]() {
+            switch (sizespecSize) {
+            case 1:
+                return llvm::Type::getInt8Ty(context);
+            case 2:
+                return llvm::Type::getInt16Ty(context);
+            case 4:
+                return llvm::Type::getInt32Ty(context);
+            case 8:
+                return llvm::Type::getInt64Ty(context);
+            default:
+                throw std::runtime_error("erroneous sizespec");
+            }
+        }();
+        return SizespecInfo{builder.CreateGEP(type, arrayPointer, {scalee}), type};
+    }
+
     llvm::Value* castToInt64(llvm::Value* v) {
         if (v->getType() == llvm::Type::getInt64Ty(*context)) {
             return v;
@@ -90,22 +126,37 @@ class SSAGenerator {
         return llvm::ConstantInt::get(intType, val, true);
     }
 
-    llvm::Value* generateUnaryOperation(const AST::PrefixOperator& unOp) {
-        switch (unOp.type) {
-        case TokenType::And_Bit: {
-            assert(unOp.operand->getType() == AST::ExpressionType::Name ||
-                   nOp.operand->getType() == AST::ExpressionType::ArrayIndexing);
-            if (unOp.operand->getType() == AST::ExpressionType::Name) {
-                llvm::Value* val =
-                    valueTracker.readVariable(static_cast<const AST::Name&>(*unOp.operand).literal, currBlock);
-                if (val->getType()->isIntegerTy()) {
-                    val = builder.CreateIntToPtr(val, llvm::PointerType::get(*context, 0));
-                }
-                return builder.CreateGEP(val->getType(), val, {});
+    llvm::Value* generateAddressOf(const AST::PrefixOperator& unOp) {
+        assert(unOp.operand->getType() == AST::ExpressionType::Name ||
+               unOp.operand->getType() == AST::ExpressionType::ArrayIndexing);
+        if (unOp.operand->getType() == AST::ExpressionType::Name) {
+            llvm::Value* val =
+                valueTracker.readVariable(static_cast<const AST::Name&>(*unOp.operand).literal, currBlock);
+            if (val->getType()->isIntegerTy()) {
+                val = builder.CreateIntToPtr(val, llvm::PointerType::get(*context, 0));
+            }
+            return builder.CreateGEP(val->getType(), val, {});
+        } else {
+            const auto& arrayIndexing = static_cast<const AST::ArrayIndexing&>(*unOp.operand);
+            auto* arrayPointer = generateExpression(*arrayIndexing.array);
+            if (arrayPointer->getType()->isIntegerTy()) {
+                arrayPointer = builder.CreateIntToPtr(arrayPointer, llvm::PointerType::get(*context, 0));
+            }
+            if (!isSizespec(arrayIndexing)) {
+                llvm::Value* index = generateExpression(*arrayIndexing.index);
+                return builder.CreateGEP(llvm::Type::getInt64Ty(*context), arrayPointer, {index});
             } else {
-                
+                auto ssInfo =
+                    handleSizespec(arrayPointer, static_cast<const AST::BinaryOperator&>(*arrayIndexing.index));
+                return ssInfo.pointerRes;
             }
         }
+    }
+
+    llvm::Value* generateUnaryOperation(const AST::PrefixOperator& unOp) {
+        switch (unOp.type) {
+        case TokenType::And_Bit:
+            return generateAddressOf(unOp);
         default:
             break;
         }
@@ -178,42 +229,17 @@ class SSAGenerator {
             if (arrayPointer->getType()->isIntegerTy()) {
                 arrayPointer = builder.CreateIntToPtr(arrayPointer, llvm::PointerType::get(*context, 0));
             }
-            bool isSizespec = [&]() {
-                if (arrayIndexing.index->getType() == AST::ExpressionType::BinaryOperator) {
-                    const auto& binop = static_cast<const AST::BinaryOperator&>(*arrayIndexing.index);
-                    if (binop.type == TokenType::Sizespec) {
-                        return true;
-                    }
-                }
-                return false;
-            }();
 
             llvm::Value* pointerToAssignTo = nullptr;
-            if (!isSizespec) {
+            if (!isSizespec(arrayIndexing)) {
                 llvm::Value* index = generateExpression(*arrayIndexing.index);
                 pointerToAssignTo = builder.CreateGEP(llvm::Type::getInt64Ty(*context), arrayPointer, {index});
                 builder.CreateStore(rightSide, pointerToAssignTo);
             } else {
                 const auto& binop = static_cast<const AST::BinaryOperator&>(*arrayIndexing.index);
-                assert(binop.operand2->getType() == AST::ExpressionType::Value);
-                std::uint8_t sizespec = static_cast<const AST::Value&>(*binop.operand2).val;
-                llvm::Value* scalee = generateExpression(*binop.operand1);
-                llvm::Type* type = [sizespec, &context = *context]() {
-                    switch (sizespec) {
-                    case 1:
-                        return llvm::Type::getInt8Ty(context);
-                    case 2:
-                        return llvm::Type::getInt16Ty(context);
-                    case 3:
-                        return llvm::Type::getInt32Ty(context);
-                    case 4:
-                        return llvm::Type::getInt64Ty(context);
-                    default:
-                        throw std::runtime_error("erroneous sizespec");
-                    }
-                }();
-                pointerToAssignTo = builder.CreateGEP(type, arrayPointer, {scalee});
-                auto* truncatedRightSide = builder.CreateTrunc(rightSide, type);
+                auto ssInfo = handleSizespec(arrayPointer, binop);
+                pointerToAssignTo = ssInfo.pointerRes;
+                auto* truncatedRightSide = builder.CreateTrunc(rightSide, ssInfo.pointerType);
                 builder.CreateStore(truncatedRightSide, pointerToAssignTo);
             }
 
@@ -273,7 +299,26 @@ class SSAGenerator {
         }
         case AST::ExpressionType::AssignmentExpr:
             return generateAssignment(static_cast<const AST::AssignmentExpr&>(expr));
+        case AST::ExpressionType::ArrayIndexing: {
+            const auto& arrayIndexing = static_cast<const AST::ArrayIndexing&>(expr);
+            auto* arrayPointer = generateExpression(*arrayIndexing.array);
+            if (arrayPointer->getType()->isIntegerTy()) {
+                arrayPointer = builder.CreateIntToPtr(arrayPointer, llvm::PointerType::get(*context, 0));
+            }
+
+            if (!isSizespec(arrayIndexing)) {
+                llvm::Value* index = generateExpression(*arrayIndexing.index);
+                auto* ptr = builder.CreateGEP(llvm::Type::getInt64Ty(*context), arrayPointer, {index});
+                return builder.CreateLoad(llvm::Type::getInt64Ty(*context), ptr);
+            } else {
+                const auto& binop = static_cast<const AST::BinaryOperator&>(*arrayIndexing.index);
+                auto ssInfo = handleSizespec(arrayPointer, binop);
+                auto* loaded = builder.CreateLoad(ssInfo.pointerType, ssInfo.pointerRes);
+                return castToInt64(loaded);
+            }
         }
+        }
+
         throw std::runtime_error(std::format("IR gen for expression {} unimplemented", expr.toString()));
     }
 
