@@ -243,6 +243,8 @@ std::optional<Node> Parser::parseExprWithPrecedence(std::uint32_t prec) {
     auto parsedPrefix = prefixParser(*this, token);
 
     while (prec <= getPrecedenceOfNext()) {
+        if (parsedPrefix->isStatement())
+            return parsedPrefix;
         maybeToken = consumeNextToken();
         if (!maybeToken) {
             return parsedPrefix;
