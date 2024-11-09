@@ -17,12 +17,11 @@ int main(int argc, char** argv) {
         std::string program{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
         auto lexed{scan(program)};
         auto ast{parse(lexed)};
-        ast.analyze();
 
         if (std::string_view{argv[1]}.starts_with("-a")) {
             std::cout << ast.sExpression() << "\n";
         }
-
+        ast.analyze();
         if (std::string_view{argv[1]}.starts_with("-c")) {
             // only AST build and sema
             return EXIT_SUCCESS;

@@ -49,12 +49,36 @@ class SSAGenerator {
     std::unordered_set<std::string_view> undecidedFunctionReturnTypes{};
     ValueTracker valueTracker{*context};
 
+    llvm::Value* castToInt64(llvm::Value* v) {
+        if (v->getType() == llvm::Type::getInt64Ty(*context)) {
+            return v;
+        }
+        if (v->getType()->isPointerTy()) {
+            return builder.CreatePtrToInt(v, llvm::Type::getInt64Ty(*context));
+        }
+        if (v->getType() == llvm::Type::getInt1Ty(*context)) {
+            // if we stupidly sext this then we get bogus :c
+            return builder.CreateZExt(v, llvm::Type::getInt64Ty(*context));
+        }
+        return builder.CreateSExt(v, llvm::Type::getInt64Ty(*context));
+    }
+
     llvm::Value* generateBinaryOperation(const AST::BinaryOperator& binOp) {
+
+        auto* expLeft = generateExpression(*binOp.operand1);
+        auto* expRight = generateExpression(*binOp.operand2);
+
+        // ints and same size necessary
+        expLeft = castToInt64(expLeft);
+        expRight = castToInt64(expRight);
+
         switch (binOp.type) {
         case TokenType::Plus:
-            return builder.CreateAdd(generateExpression(*binOp.operand1), generateExpression(*binOp.operand2));
+            return builder.CreateAdd(expLeft, expRight);
         case TokenType::Minus:
-            return builder.CreateSub(generateExpression(*binOp.operand1), generateExpression(*binOp.operand2));
+            return builder.CreateSub(expLeft, expRight);
+        case TokenType::Uneqal:
+            return builder.CreateICmpNE(expLeft, expRight);
         }
         throw std::runtime_error("Unimplemented IR gen of binop");
     }
@@ -67,6 +91,25 @@ class SSAGenerator {
     }
 
     llvm::Value* generateUnaryOperation(const AST::PrefixOperator& unOp) {
+        switch (unOp.type) {
+        case TokenType::And_Bit: {
+            assert(unOp.operand->getType() == AST::ExpressionType::Name ||
+                   nOp.operand->getType() == AST::ExpressionType::ArrayIndexing);
+            if (unOp.operand->getType() == AST::ExpressionType::Name) {
+                llvm::Value* val =
+                    valueTracker.readVariable(static_cast<const AST::Name&>(*unOp.operand).literal, currBlock);
+                if (val->getType()->isIntegerTy()) {
+                    val = builder.CreateIntToPtr(val, llvm::PointerType::get(*context, 0));
+                }
+                return builder.CreateGEP(val->getType(), val, {});
+            } else {
+                
+            }
+        }
+        default:
+            break;
+        }
+        // normals
         llvm::Value* inner = generateExpression(*unOp.operand);
         switch (unOp.type) {
         case TokenType::Minus:
@@ -75,8 +118,10 @@ class SSAGenerator {
             return builder.CreateNot(inner);
         case TokenType::Exclamation_Mark:
             return builder.CreateICmpEQ(inner, fromInt(0, inner->getType()));
+        default:
+            break;
         }
-        throw std::runtime_error("Unimplemented IR gen of unop");
+        throw std::runtime_error(std::format("Unimplemented IR gen of unop {}", unOp.sExpression()));
     }
 
     llvm::Value* codegenFunctionCall(const AST::FunctionCall& expr) {
@@ -88,10 +133,18 @@ class SSAGenerator {
             while (argNode) {
                 if (argNode->getType() == AST::ExpressionType::CommaList) {
                     const auto& list = static_cast<const AST::CommaList&>(*argNode);
-                    args.push_back(generateExpression(*list.left));
+                    auto* expr = generateExpression(*list.left);
+                    if (expr->getType()->isPointerTy()) {
+                        expr = builder.CreatePtrToInt(expr, llvm::Type::getInt64Ty(*context));
+                    }
+                    args.push_back(expr);
                     argNode = list.right.get();
                 } else {
-                    args.push_back(generateExpression(*argNode));
+                    auto* expr = generateExpression(*argNode);
+                    if (expr->getType()->isPointerTy()) {
+                        expr = builder.CreatePtrToInt(expr, llvm::Type::getInt64Ty(*context));
+                    }
+                    args.push_back(expr);
                     break;
                 }
             }
@@ -114,6 +167,67 @@ class SSAGenerator {
         auto* alloca = builder.CreateAlloca(type);
         builder.SetInsertPoint(currBlock);
         return alloca;
+    }
+
+    llvm::Value* generateAssignment(const AST::AssignmentExpr& assExpr) {
+        llvm::Value* rightSide = generateExpression(*assExpr.right);
+        if (assExpr.left->getType() != AST::ExpressionType::Name) {
+            const auto& arrayIndexing = static_cast<const AST::ArrayIndexing&>(*assExpr.left);
+
+            auto* arrayPointer = generateExpression(*arrayIndexing.array);
+            if (arrayPointer->getType()->isIntegerTy()) {
+                arrayPointer = builder.CreateIntToPtr(arrayPointer, llvm::PointerType::get(*context, 0));
+            }
+            bool isSizespec = [&]() {
+                if (arrayIndexing.index->getType() == AST::ExpressionType::BinaryOperator) {
+                    const auto& binop = static_cast<const AST::BinaryOperator&>(*arrayIndexing.index);
+                    if (binop.type == TokenType::Sizespec) {
+                        return true;
+                    }
+                }
+                return false;
+            }();
+
+            llvm::Value* pointerToAssignTo = nullptr;
+            if (!isSizespec) {
+                llvm::Value* index = generateExpression(*arrayIndexing.index);
+                pointerToAssignTo = builder.CreateGEP(llvm::Type::getInt64Ty(*context), arrayPointer, {index});
+                builder.CreateStore(rightSide, pointerToAssignTo);
+            } else {
+                const auto& binop = static_cast<const AST::BinaryOperator&>(*arrayIndexing.index);
+                assert(binop.operand2->getType() == AST::ExpressionType::Value);
+                std::uint8_t sizespec = static_cast<const AST::Value&>(*binop.operand2).val;
+                llvm::Value* scalee = generateExpression(*binop.operand1);
+                llvm::Type* type = [sizespec, &context = *context]() {
+                    switch (sizespec) {
+                    case 1:
+                        return llvm::Type::getInt8Ty(context);
+                    case 2:
+                        return llvm::Type::getInt16Ty(context);
+                    case 3:
+                        return llvm::Type::getInt32Ty(context);
+                    case 4:
+                        return llvm::Type::getInt64Ty(context);
+                    default:
+                        throw std::runtime_error("erroneous sizespec");
+                    }
+                }();
+                pointerToAssignTo = builder.CreateGEP(type, arrayPointer, {scalee});
+                auto* truncatedRightSide = builder.CreateTrunc(rightSide, type);
+                builder.CreateStore(truncatedRightSide, pointerToAssignTo);
+            }
+
+        } else {
+            std::string_view assignedVar = static_cast<const AST::Name&>(*assExpr.left).literal;
+            // this variable has to have been declared already
+            llvm::Value* currVal = valueTracker.readVariable(assignedVar, currBlock);
+            if (llvm::AllocaInst* alloca = dyn_cast<llvm::AllocaInst>(currVal)) {
+                builder.CreateStore(rightSide, alloca);
+            } else {
+                valueTracker.writeVariable(assignedVar, currBlock, rightSide);
+            }
+        }
+        return rightSide;
     }
 
     llvm::Value* generateDeclaration(const AST::Assignment& decl) {
@@ -157,22 +271,8 @@ class SSAGenerator {
             }
             return val;
         }
-        case AST::ExpressionType::AssignmentExpr: {
-            const AST::AssignmentExpr& assExpr = static_cast<const AST::AssignmentExpr&>(expr);
-            if (assExpr.left->getType() != AST::ExpressionType::Name) {
-                throw std::runtime_error("Unimplemented left side of assignment");
-            }
-            std::string_view assignedVar = static_cast<const AST::Name&>(*assExpr.left).literal;
-            llvm::Value* rightSide = generateExpression(*assExpr.right);
-            // this variable has to have been declared already
-            llvm::Value* currVal = valueTracker.readVariable(assignedVar, currBlock);
-            if (llvm::AllocaInst* alloca = dyn_cast<llvm::AllocaInst>(currVal)) {
-                builder.CreateStore(rightSide, alloca);
-            } else {
-                valueTracker.writeVariable(assignedVar, currBlock, rightSide);
-            }
-            return rightSide;
-        }
+        case AST::ExpressionType::AssignmentExpr:
+            return generateAssignment(static_cast<const AST::AssignmentExpr&>(expr));
         }
         throw std::runtime_error(std::format("IR gen for expression {} unimplemented", expr.toString()));
     }
@@ -203,7 +303,8 @@ class SSAGenerator {
         case AST::ExpressionType::Assignment:
             return generateDeclaration(static_cast<const AST::Assignment&>(statement));
         default:
-            throw std::runtime_error("Unknown statement type while generating IR for statement");
+            throw std::runtime_error(
+                std::format("Unknown statement type while generating IR for statement {}", statement.sExpression()));
         }
     }
 
@@ -243,6 +344,10 @@ class SSAGenerator {
                 break;
             }
         }
+
+        if (!currBlock->getTerminator()) {
+            builder.CreateRetVoid();
+        }
         // generateStatement(func.body[0]);
     }
 
@@ -261,7 +366,10 @@ class SSAGenerator {
 IntermediateRepresentation generateIR(AST::AST ast) {
     SSAGenerator ssaGen{std::move(ast)};
     auto IR = ssaGen.releaseIR();
-    if (llvm::verifyModule(*IR.module, &llvm::errs()))
+    if (llvm::verifyModule(*IR.module, &llvm::errs())) {
+        IR.module->print(llvm::errs(), nullptr);
+
         throw std::runtime_error("Invalid IR!");
+    }
     return IR;
 }

@@ -382,9 +382,6 @@ FunctionCall::FunctionCall(Node name, std::optional<Node> args) : name{std::move
 }
 
 void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
-    // TODO: fix this?
-    // name->doAnalysis(*scope.duplicate(), depth);
-
     if (!NODE_IS(name, Name) || scope.getVariable(NODE_AS_REF(name, Name).literal)) {
         throw std::runtime_error("Only functions can be called");
     }
@@ -400,10 +397,6 @@ void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
             else
                 argCnt = 1;
         }
-    }
-    // TODO as above
-    for (auto& s : scope.functions) {
-        std::cout << s.first << std::endl;
     }
 
     std::string_view funcName{NODE_AS_REF(name, Name).literal};

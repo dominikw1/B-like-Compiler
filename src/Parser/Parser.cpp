@@ -132,6 +132,7 @@ static Node parseAssignment(Parser& parser, Token consumed) {
         throw std::runtime_error("Failed to parse left side of assignment");
     }
     parser.consumeTokenOfType(TokenType::Assignment);
+    //   std::cout << "parsing assignment decl\n";
     auto right = parser.parseExpression();
     if (!right) {
         throw std::runtime_error("Failed to parse right side of assignment");
@@ -241,6 +242,7 @@ std::optional<Node> Parser::parseExprWithPrecedence(std::uint32_t prec) {
         throw std::runtime_error("Error parsing token " + token.toString() + ". Expected an expression");
 
     auto parsedPrefix = prefixParser(*this, token);
+    // std::cout << std::format("parsed prefix: {}\n", parsedPrefix->sExpression());
 
     while (prec <= getPrecedenceOfNext()) {
         if (parsedPrefix->isStatement())
