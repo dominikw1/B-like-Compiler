@@ -28,7 +28,17 @@ llvm::Value* ValueTracker::reduceTrivialPhi(llvm::PHINode* phi) {
 
 llvm::Value* ValueTracker::addPhiOperands(std::string_view var, llvm::PHINode* phi, llvm::BasicBlock* block) {
     for (auto* pred : llvm::predecessors(block)) {
-        phi->addIncoming(readVariable(var, pred), pred);
+        auto* newV = readVariable(var, pred);
+        if (newV->getType() != phi->getType()) {
+            if (phi->getNumIncomingValues() == 0) {
+                phi->mutateType(newV->getType());
+            } else {
+                newV->print(llvm::errs());
+                phi->print(llvm::errs());
+                throw std::runtime_error("Incompatible types");
+            }
+        }
+        phi->addIncoming(newV, pred);
     }
     return reduceTrivialPhi(phi);
 }

@@ -2,6 +2,7 @@
 #include "ValueTracker.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 namespace {
 
@@ -101,20 +102,36 @@ class SSAGenerator {
 
     llvm::Value* generateBinaryOperation(const AST::BinaryOperator& binOp) {
 
+        switch (binOp.type) {
+        case TokenType::And_Logical:
+            return generateAndLogical(*binOp.operand1, *binOp.operand2);
+        default:
+            break;
+        }
+
         auto* expLeft = generateExpression(*binOp.operand1);
         auto* expRight = generateExpression(*binOp.operand2);
-
         // ints and same size necessary
         expLeft = castToInt64(expLeft);
         expRight = castToInt64(expRight);
 
         switch (binOp.type) {
+        case TokenType::Larger:
+            return builder.CreateICmpSGT(expLeft, expRight);
+        case TokenType::Smaller:
+            return builder.CreateICmpSLT(expLeft, expRight);
+        case TokenType::Larger_Equal:
+            return builder.CreateICmpSGE(expLeft, expRight);
+        case TokenType::Smaller_Equal:
+            return builder.CreateICmpSGE(expLeft, expRight);
         case TokenType::Plus:
             return builder.CreateAdd(expLeft, expRight);
         case TokenType::Minus:
             return builder.CreateSub(expLeft, expRight);
         case TokenType::Uneqal:
             return builder.CreateICmpNE(expLeft, expRight);
+        case TokenType::Equals:
+            return builder.CreateICmpEQ(expLeft, expRight);
         }
         throw std::runtime_error("Unimplemented IR gen of binop");
     }
@@ -220,6 +237,64 @@ class SSAGenerator {
         return alloca;
     }
 
+    llvm::Value* generateAndLogical(const AST::Expression& left, const AST::Expression& right) {
+        auto* falseBlock = llvm::BasicBlock::Create(*context, "noShortCircuit", currFunc);
+        auto* resultBlock = llvm::BasicBlock::Create(*context, "boolExprResult", currFunc);
+
+        llvm::Value* leftVal = castToInt64(generateExpression(left));
+        llvm::Value* leftValBoolean = builder.CreateICmpNE(
+            leftVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
+        llvm::Value* branchToFalse = builder.CreateCondBr(leftValBoolean, resultBlock, falseBlock);
+
+        auto* trueBlock = currBlock;
+        switchBlock(falseBlock);
+        valueTracker.sealBlock(falseBlock);
+
+        llvm::Value* rightVal = castToInt64(generateExpression(right));
+        auto* blockAfterRightValGeneration = currBlock;
+        llvm::Value* rightValBoolean = builder.CreateICmpNE(
+            rightVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0), "rightValBoolean");
+
+        llvm::Value* branchToResult = builder.CreateBr(resultBlock);
+        switchBlock(resultBlock);
+        valueTracker.sealBlock(resultBlock);
+
+        auto exprResult = llvm::PHINode::Create(llvm::Type::getInt1Ty(*context), 2, "boolExprResultNode");
+        builder.Insert(exprResult);
+        exprResult->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context), 1), trueBlock);
+        exprResult->addIncoming(rightValBoolean, blockAfterRightValGeneration);
+        return exprResult;
+    }
+
+    llvm::Value* generateOrLogical(const AST::Expression& left, const AST::Expression& right) {
+        auto* falseBlock = llvm::BasicBlock::Create(*context, "noShortCircuit", currFunc);
+        auto* resultBlock = llvm::BasicBlock::Create(*context, "boolExprResult", currFunc);
+
+        llvm::Value* leftVal = castToInt64(generateExpression(left));
+        llvm::Value* leftValBoolean = builder.CreateICmpNE(
+            leftVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
+        llvm::Value* branchToFalse = builder.CreateCondBr(leftValBoolean, resultBlock, falseBlock);
+
+        auto* trueBlock = currBlock;
+        switchBlock(falseBlock);
+        valueTracker.sealBlock(falseBlock);
+
+        llvm::Value* rightVal = castToInt64(generateExpression(right));
+        auto* blockAfterRightValGeneration = currBlock;
+        llvm::Value* rightValBoolean = builder.CreateICmpNE(
+            rightVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0), "rightValBoolean");
+
+        llvm::Value* branchToResult = builder.CreateBr(resultBlock);
+        switchBlock(resultBlock);
+        valueTracker.sealBlock(resultBlock);
+
+        auto exprResult = llvm::PHINode::Create(llvm::Type::getInt1Ty(*context), 2, "boolExprResultNode");
+        builder.Insert(exprResult);
+        exprResult->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context), 1), trueBlock);
+        exprResult->addIncoming(rightValBoolean, blockAfterRightValGeneration);
+        return exprResult;
+    }
+
     llvm::Value* generateAssignment(const AST::AssignmentExpr& assExpr) {
         llvm::Value* rightSide = generateExpression(*assExpr.right);
         if (assExpr.left->getType() != AST::ExpressionType::Name) {
@@ -242,7 +317,6 @@ class SSAGenerator {
                 auto* truncatedRightSide = builder.CreateTrunc(rightSide, ssInfo.pointerType);
                 builder.CreateStore(truncatedRightSide, pointerToAssignTo);
             }
-
         } else {
             std::string_view assignedVar = static_cast<const AST::Name&>(*assExpr.left).literal;
             // this variable has to have been declared already
@@ -272,6 +346,12 @@ class SSAGenerator {
     }
 
     llvm::Value* generateExpression(const AST::Expression& expr) {
+        if (expr.isStatement()) {
+            generateStatement(static_cast<const AST::Statement&>(expr));
+            // in this branch the value shall never be used! This is only called if we are coming from an if / while
+            // which discards the return value
+            return nullptr;
+        }
         switch (expr.getType()) {
         case AST::ExpressionType::Value:
             return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), static_cast<const AST::Value&>(expr).val,
@@ -328,6 +408,60 @@ class SSAGenerator {
         return builder.CreateSExt(castee, type);
     }
 
+    void switchBlock(llvm::BasicBlock* newBlock) {
+        currBlock = newBlock;
+        builder.SetInsertPoint(newBlock);
+    }
+
+    bool generateIfStatement(const AST::If& ifStatement) {
+        auto* conditionValue = castToInt64(generateExpression(*ifStatement.condition));
+        auto* conditionValueNeq0 = builder.CreateICmpNE(
+            conditionValue, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "ifCondition");
+
+        auto* thenBranchBlock = llvm::BasicBlock::Create(*context, "thenBranch", currFunc);
+        llvm::BasicBlock* elseBranchBlock = nullptr;
+        if (ifStatement.elseBranch) {
+            elseBranchBlock = llvm::BasicBlock::Create(*context, "elseBranch", currFunc);
+            builder.CreateCondBr(conditionValueNeq0, thenBranchBlock, elseBranchBlock);
+        }
+        auto* postIfBlock = llvm::BasicBlock::Create(*context, "postIf", currFunc);
+        if (!elseBranchBlock) {
+            builder.CreateCondBr(conditionValueNeq0, thenBranchBlock, postIfBlock);
+        }
+
+        switchBlock(thenBranchBlock);
+        valueTracker.sealBlock(thenBranchBlock);
+        generateExpression(*ifStatement.thenBranch);
+
+        bool thenHadTerminator = false;
+        bool elseHadTerminator = false;
+        if (!currBlock->getTerminator())
+            builder.CreateBr(postIfBlock);
+        else
+            thenHadTerminator = true;
+
+        if (elseBranchBlock) {
+            switchBlock(elseBranchBlock);
+            valueTracker.sealBlock(elseBranchBlock);
+            assert(ifStatement.elseBranch);
+            generateExpression(*ifStatement.elseBranch.value());
+            if (!currBlock->getTerminator())
+                builder.CreateBr(postIfBlock);
+            else
+                elseHadTerminator = true;
+            valueTracker.sealBlock(elseBranchBlock);
+        }
+
+        if (llvm::pred_size(postIfBlock) == 0 || (thenHadTerminator && elseHadTerminator)) {
+            llvm::DeleteDeadBlock(postIfBlock);
+            return false;
+        } else {
+            switchBlock(postIfBlock);
+            valueTracker.sealBlock(postIfBlock);
+        }
+        return true;
+    }
+
     bool generateStatement(const AST::Statement& statement) {
         switch (statement.getType()) {
         case AST::ExpressionType::Return: {
@@ -346,7 +480,10 @@ class SSAGenerator {
             return true;
         }
         case AST::ExpressionType::Assignment:
-            return generateDeclaration(static_cast<const AST::Assignment&>(statement));
+            generateDeclaration(static_cast<const AST::Assignment&>(statement));
+            return true;
+        case AST::ExpressionType::If:
+            return generateIfStatement(static_cast<const AST::If&>(statement));
         default:
             throw std::runtime_error(
                 std::format("Unknown statement type while generating IR for statement {}", statement.sExpression()));
@@ -374,6 +511,7 @@ class SSAGenerator {
 
         currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
         currBlock = llvm::BasicBlock::Create(*context, "entry", currFunc);
+        valueTracker.sealBlock(currBlock);
 
         auto argIt = currFunc->arg_begin();
         for (size_t i = 0; i < numParams; ++i) {
@@ -393,7 +531,6 @@ class SSAGenerator {
         if (!currBlock->getTerminator()) {
             builder.CreateRetVoid();
         }
-        // generateStatement(func.body[0]);
     }
 
   public:
