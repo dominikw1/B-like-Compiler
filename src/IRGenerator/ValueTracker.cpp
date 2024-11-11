@@ -45,7 +45,8 @@ llvm::Value* ValueTracker::addPhiOperands(std::string_view var, llvm::PHINode* p
 
 void ValueTracker::sealBlock(llvm::BasicBlock* block) {
     for (auto var : incompletePhis[block]) {
-        addPhiOperands(var.first, llvm::cast<llvm::PHINode>(var.second), block);
+        llvm::PHINode* phi = llvm::cast<llvm::PHINode>(var.second);
+        addPhiOperands(var.first, phi, block);
     }
     sealed.insert(block);
 }

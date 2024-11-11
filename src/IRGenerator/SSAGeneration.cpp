@@ -105,6 +105,8 @@ class SSAGenerator {
         switch (binOp.type) {
         case TokenType::And_Logical:
             return generateAndLogical(*binOp.operand1, *binOp.operand2);
+        case TokenType::Or_Logical:
+            return generateOrLogical(*binOp.operand1, *binOp.operand2);
         default:
             break;
         }
@@ -238,17 +240,17 @@ class SSAGenerator {
     }
 
     llvm::Value* generateAndLogical(const AST::Expression& left, const AST::Expression& right) {
-        auto* falseBlock = llvm::BasicBlock::Create(*context, "noShortCircuit", currFunc);
+        auto* trueBlock = llvm::BasicBlock::Create(*context, "noShortCircuit", currFunc);
         auto* resultBlock = llvm::BasicBlock::Create(*context, "boolExprResult", currFunc);
 
         llvm::Value* leftVal = castToInt64(generateExpression(left));
-        llvm::Value* leftValBoolean = builder.CreateICmpNE(
+        llvm::Value* leftValBoolean = builder.CreateICmpEQ(
             leftVal, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "leftValBoolean");
-        llvm::Value* branchToFalse = builder.CreateCondBr(leftValBoolean, resultBlock, falseBlock);
+        llvm::Value* branchToFalse = builder.CreateCondBr(leftValBoolean, resultBlock, trueBlock);
 
-        auto* trueBlock = currBlock;
-        switchBlock(falseBlock);
-        valueTracker.sealBlock(falseBlock);
+        auto* falseBlock = currBlock;
+        switchBlock(trueBlock);
+        valueTracker.sealBlock(trueBlock);
 
         llvm::Value* rightVal = castToInt64(generateExpression(right));
         auto* blockAfterRightValGeneration = currBlock;
@@ -261,7 +263,7 @@ class SSAGenerator {
 
         auto exprResult = llvm::PHINode::Create(llvm::Type::getInt1Ty(*context), 2, "boolExprResultNode");
         builder.Insert(exprResult);
-        exprResult->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context), 1), trueBlock);
+        exprResult->addIncoming(llvm::ConstantInt::get(llvm::Type::getInt1Ty(*context), 0), falseBlock);
         exprResult->addIncoming(rightValBoolean, blockAfterRightValGeneration);
         return exprResult;
     }
@@ -343,6 +345,33 @@ class SSAGenerator {
             valueTracker.writeVariable(name, currBlock, rightSide);
         }
         return rightSide;
+    }
+
+    void generateWhile(const AST::While& whileStatement) {
+        auto conditionBlock = llvm::BasicBlock::Create(*context, "conditionBlock", currFunc);
+        auto whileBlock = llvm::BasicBlock::Create(*context, "whileBlock", currFunc);
+        auto postWhileBlock = llvm::BasicBlock::Create(*context, "postWhileBlock", currFunc);
+        builder.CreateBr(conditionBlock);
+
+        switchBlock(conditionBlock);
+        llvm::errs() << "generating while cond \n";
+        auto* conditionValue = castToInt64(generateExpression(*whileStatement.condition));
+        auto* conditionValueNeq0 = builder.CreateICmpNE(
+            conditionValue, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "whileCondition");
+
+        builder.CreateCondBr(conditionValueNeq0, whileBlock, postWhileBlock);
+
+        switchBlock(whileBlock);
+        valueTracker.sealBlock(whileBlock);
+        generateExpression(*whileStatement.body);
+
+        if (!currBlock->getTerminator())
+            builder.CreateBr(conditionBlock);
+
+        valueTracker.sealBlock(conditionBlock);
+
+        switchBlock(postWhileBlock);
+        valueTracker.sealBlock(postWhileBlock);
     }
 
     llvm::Value* generateExpression(const AST::Expression& expr) {
@@ -484,6 +513,17 @@ class SSAGenerator {
             return true;
         case AST::ExpressionType::If:
             return generateIfStatement(static_cast<const AST::If&>(statement));
+        case AST::ExpressionType::While:
+            generateWhile(static_cast<const AST::While&>(statement));
+            return true;
+        case AST::ExpressionType::Scope: {
+            for (auto& statement : static_cast<const AST::Scope&>(statement).scoped) {
+                if (!generateStatement(static_cast<const AST::Statement&>(*statement))) {
+                    break; // return false?
+                }
+            }
+            return true;
+        }
         default:
             throw std::runtime_error(
                 std::format("Unknown statement type while generating IR for statement {}", statement.sExpression()));
