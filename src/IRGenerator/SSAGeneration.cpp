@@ -134,6 +134,22 @@ class SSAGenerator {
             return builder.CreateICmpNE(expLeft, expRight);
         case TokenType::Equals:
             return builder.CreateICmpEQ(expLeft, expRight);
+        case TokenType::Star:
+            return builder.CreateMul(expLeft, expRight);
+        case TokenType::Xor:
+            return builder.CreateXor(expLeft, expRight);
+        case TokenType::Slash:
+            return builder.CreateSDiv(expLeft, expRight);
+        case TokenType::And_Bit:
+            return builder.CreateAnd(expLeft, expRight);
+        case TokenType::Or_Bit:
+            return builder.CreateOr(expLeft, expRight);
+        case TokenType::Bitshift_Left:
+            return builder.CreateShl(expLeft, expRight);
+        case TokenType::Bitshift_Right:
+            return builder.CreateAShr(expLeft, expRight);
+        case TokenType::Mod:
+            return builder.CreateSRem(expLeft, expRight);
         }
         throw std::runtime_error("Unimplemented IR gen of binop");
     }

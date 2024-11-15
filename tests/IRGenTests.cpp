@@ -1,4 +1,3 @@
-#include "CFG.h"
 #include "Parser.h"
 #include "SSAGeneration.h"
 #include "Scanner.h"
@@ -9,10 +8,9 @@
     do {                                                                                                               \
         auto ast = parse(scan(program));                                                                               \
         ast.analyze();                                                                                                 \
-        auto cfg = CFG::generateCFG(ast);                                                                              \
-        auto ir = generateIR(cfg);                                                                                     \
-        ir.module->dump();                                                                                             \
-        bool isWrong = llvm::verifyModule(*ir.module, &llvm::outs());                                                  \
+        auto IR = generateIR(std::move(ast));                                                                              \
+        IR.module->dump();                                                                                             \
+        bool isWrong = llvm::verifyModule(*IR.module, &llvm::outs());                                                  \
         ASSERT_FALSE(isWrong);                                                                                         \
     } while (0);
 
