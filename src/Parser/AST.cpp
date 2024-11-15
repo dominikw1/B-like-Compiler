@@ -18,7 +18,7 @@
     } while (0);
 
 namespace AST {
-void AST::analyze() const {
+void AST::analyze() {
     SymbolScope scope{};
     for (auto& func : toplevel) {
         auto& funAsFunc = NODE_AS_REF(func, Function);
@@ -43,12 +43,16 @@ void AST::analyze() const {
     }
 }
 
-void Value::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {}
+void Value::doAnalysis(SymbolScope& scope, std::uint32_t depth) {}
 
-void Name::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void Name::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (!scope.symbolExists(literal)) {
         scope.dump();
         throw std::runtime_error(std::format("Referenced symbol {} not in scope", literal));
+    }
+    if (auto var = scope.getVariable(literal)) {
+        if (var->type == VariableType::Auto)
+            isAlloca = true;
     }
 }
 
@@ -96,7 +100,7 @@ void doCheckForAddressOf(const SymbolScope& scope, const Node& operand) {
     }
 }
 
-void PrefixOperator::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void PrefixOperator::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     operand->doAnalysis(*scope.duplicate(), depth);
     if (type == TokenType::And_Bit) {
         doCheckForAddressOf(scope, operand);
@@ -112,14 +116,14 @@ BinaryOperator::BinaryOperator(TokenType type, Node operand1, Node operand2)
     }
 }
 
-void BinaryOperator::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void BinaryOperator::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     operand1->doAnalysis(*scope.duplicate(), depth);
     operand2->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(operand1, scope);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(operand2, scope);
 }
 
-void ExpressionStatement::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void ExpressionStatement::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(expression, scope);
     expression->doAnalysis(*scope.duplicate(), depth);
 }
@@ -133,14 +137,19 @@ AssignmentExpr::AssignmentExpr(Node left, Node right) : left{std::move(left)}, r
     }
 }
 
-void AssignmentExpr::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void AssignmentExpr::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (auto name = NODE_IS(left, Name) ? std::optional{NODE_AS_REF(left, Name).literal} : std::nullopt) {
         if (scope.getFunction(*name)) {
             throw std::runtime_error("Cannot assign to function");
         }
-        if (!scope.getOrTransformVariable(*name)) {
+        if (auto var = scope.getOrTransformVariable(*name)) {
+            if (var->type == VariableType::Auto) {
+                static_cast<Name*>(left.get())->isAlloca = true;
+            }
+        } else {
             throw std::runtime_error("Assignment to unknown identifier");
         }
+
     } else {
         // TODO: is l value  analysis
         left->doAnalysis(*scope.duplicate(), depth);
@@ -160,14 +169,22 @@ Assignment::Assignment(std::optional<Token> modifyer, Node left, Node right)
         (this->modifyer.value().type != TokenType::Auto && this->modifyer.value().type != TokenType::Register)) {
         throw std::runtime_error("Invalid modifier for assignment");
     }
+    if (this->modifyer && NODE_IS(this->left, Name)) { // if we have a modifyier it IS a Name
+        static_cast<Name*>(this->left.get())->isAlloca =
+            (this->modifyer && this->modifyer.value().type == TokenType::Auto);
+    }
 }
 
-void Assignment::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void Assignment::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (auto name = NODE_IS(left, Name) ? std::optional{NODE_AS_REF(left, Name).literal} : std::nullopt) {
         if (scope.getFunction(*name)) {
             throw std::runtime_error("Cannot declare variable with same name as function");
         }
+
         if (auto var = scope.getOrTransformVariable(*name); var) {
+            if (var->type == VariableType::Auto) {
+                static_cast<Name*>(left.get())->isAlloca = true;
+            }
             if (var->depthDecl == depth && modifyer) {
                 throw std::runtime_error(
                     std::format("Cannot redeclare variable {} of same name at same scope depth", *name));
@@ -185,7 +202,7 @@ Scope::Scope(std::vector<Node> scoped) : scoped{std::move(scoped)} {
     }
 }
 
-void Scope::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void Scope::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     for (auto& scopedStatement : scoped) {
         scopedStatement->doAnalysis(*scope.duplicate(), depth + 1);
         if (NODE_IS(scopedStatement, Assignment)) {
@@ -231,7 +248,7 @@ If::If(Node condition, Node thenBranch, std::optional<Node> elseBranch)
     }
 }
 
-void If::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void If::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     condition->doAnalysis(*scope.duplicate(), depth);
     thenBranch->doAnalysis(*scope.duplicate(), depth + 1);
     if (NODE_IS(thenBranch, Assignment)) {
@@ -291,7 +308,7 @@ Function::Function(Node name, std::optional<Node> argList, std::vector<Node> bod
     isVoid = !hasNonVoidRet; // not hasVoidRet as no return statement is necessay for void funcs
 }
 
-void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (argList && NODE_AS_REF(argList.value(), Parenthesised).inner) {
         const auto& parenthesised = *NODE_AS_REF(argList.value(), Parenthesised).inner;
         if (NODE_IS(parenthesised, Name)) {
@@ -351,12 +368,12 @@ While::While(Node cond, Node body) : condition{std::move(cond)}, body{std::move(
     }
 }
 
-void While::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void While::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     condition->doAnalysis(*scope.duplicate(), depth);
     body->doAnalysis(*scope.duplicate(), depth + 1);
 }
 
-void Return::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void Return::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (what) {
         what.value()->doAnalysis(*scope.duplicate(), depth);
     }
@@ -381,7 +398,7 @@ FunctionCall::FunctionCall(Node name, std::optional<Node> args) : name{std::move
     }
 }
 
-void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void FunctionCall::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (!NODE_IS(name, Name) || scope.getVariable(NODE_AS_REF(name, Name).literal)) {
         throw std::runtime_error("Only functions can be called");
     }
@@ -416,7 +433,7 @@ CommaList::CommaList(Node left, Node right) : left{std::move(left)}, right{std::
     }
 }
 
-void CommaList::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void CommaList::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     left->doAnalysis(*scope.duplicate(), depth);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(left, scope);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(right, scope);
@@ -427,7 +444,7 @@ Parenthesised::Parenthesised(std::optional<Node> inner) : inner{std::move(inner)
         throw std::runtime_error("Nullptr in parenthesised expression.");
     }
 }
-void Parenthesised::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void Parenthesised::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     if (inner)
         inner.value()->doAnalysis(*scope.duplicate(), depth);
 }
@@ -446,7 +463,7 @@ ArrayIndexing::ArrayIndexing(Node array, Node index) : array{std::move(array)}, 
     }
 }
 
-void ArrayIndexing::doAnalysis(SymbolScope& scope, std::uint32_t depth) const {
+void ArrayIndexing::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(array, scope);
     ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(index, scope);
     array->doAnalysis(*scope.duplicate(), depth);

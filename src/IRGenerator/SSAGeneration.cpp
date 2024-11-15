@@ -150,7 +150,8 @@ class SSAGenerator {
                unOp.operand->getType() == AST::ExpressionType::ArrayIndexing);
         if (unOp.operand->getType() == AST::ExpressionType::Name) {
             llvm::Value* val =
-                valueTracker.readVariable(static_cast<const AST::Name&>(*unOp.operand).literal, currBlock);
+                valueTracker.readVariable(static_cast<const AST::Name&>(*unOp.operand).literal,
+                                          static_cast<const AST::Name&>(*unOp.operand).isAlloca, currBlock);
             if (val->getType()->isIntegerTy()) {
                 val = builder.CreateIntToPtr(val, llvm::PointerType::get(*context, 0));
             }
@@ -233,7 +234,10 @@ class SSAGenerator {
     }
 
     llvm::Value* createAlloca(llvm::Type* type) {
-        builder.SetInsertPoint(&currFunc->getEntryBlock());
+        if (currFunc->getEntryBlock().empty())
+            builder.SetInsertPoint(&currFunc->getEntryBlock());
+        else
+            builder.SetInsertPoint(&*currFunc->getEntryBlock().begin());
         auto* alloca = builder.CreateAlloca(type);
         builder.SetInsertPoint(currBlock);
         return alloca;
@@ -322,9 +326,10 @@ class SSAGenerator {
         } else {
             std::string_view assignedVar = static_cast<const AST::Name&>(*assExpr.left).literal;
             // this variable has to have been declared already
-            llvm::Value* currVal = valueTracker.readVariable(assignedVar, currBlock);
-            if (llvm::AllocaInst* alloca = dyn_cast<llvm::AllocaInst>(currVal)) {
-                builder.CreateStore(rightSide, alloca);
+            llvm::Value* currVal = valueTracker.readVariable(
+                assignedVar, static_cast<const AST::Name&>(*assExpr.left).isAlloca, currBlock);
+            if (static_cast<const AST::Name&>(*assExpr.left).isAlloca) {
+                builder.CreateStore(rightSide, currVal);
             } else {
                 valueTracker.writeVariable(assignedVar, currBlock, rightSide);
             }
@@ -354,7 +359,6 @@ class SSAGenerator {
         builder.CreateBr(conditionBlock);
 
         switchBlock(conditionBlock);
-        llvm::errs() << "generating while cond \n";
         auto* conditionValue = castToInt64(generateExpression(*whileStatement.condition));
         auto* conditionValueNeq0 = builder.CreateICmpNE(
             conditionValue, llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0, true), "whileCondition");
@@ -400,9 +404,10 @@ class SSAGenerator {
         case AST::ExpressionType::FunctionCall:
             return codegenFunctionCall(static_cast<const AST::FunctionCall&>(expr));
         case AST::ExpressionType::Name: {
-            llvm::Value* val = valueTracker.readVariable(static_cast<const AST::Name&>(expr).literal, currBlock);
-            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(val)) {
-                return builder.CreateLoad(llvm::Type::getInt64Ty(*context), alloca);
+            llvm::Value* val = valueTracker.readVariable(static_cast<const AST::Name&>(expr).literal,
+                                                         static_cast<const AST::Name&>(expr).isAlloca, currBlock);
+            if (static_cast<const AST::Name&>(expr).isAlloca) {
+                return builder.CreateLoad(llvm::Type::getInt64Ty(*context), val);
             }
             return val;
         }
