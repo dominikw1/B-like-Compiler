@@ -1,5 +1,6 @@
 add_subdirectory(Parser)
 add_subdirectory(IRGenerator)
+add_subdirectory(InstructionSelector)
 
 add_executable(
     Compiler

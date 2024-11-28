@@ -1,0 +1,2 @@
+add_library(InstructionSelector InstructionSelector.cpp)
+target_link_libraries(InstructionSelector LLVM) 

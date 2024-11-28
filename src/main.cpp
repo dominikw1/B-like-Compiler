@@ -1,4 +1,5 @@
 #include "IRGenerator/SSAGeneration.h"
+#include "InstructionSelector/InstructionSelector.h"
 #include "Parser/AST.h"
 #include "Parser/Parser.h"
 #include "Parser/Scanner.h"
@@ -18,14 +19,15 @@ int main(int argc, char** argv) {
         auto lexed{scan(program)};
         auto ast{parse(lexed)};
 
-        if (std::string_view{argv[1]}.starts_with("-a")) {
-            std::cout << ast.sExpression() << "\n";
-        }
-        ast.analyze();
         if (std::string_view{argv[1]}.starts_with("-c")) {
             // only AST build and sema
             return EXIT_SUCCESS;
         }
+
+        if (std::string_view{argv[1]}.starts_with("-a")) {
+            std::cout << ast.sExpression() << "\n";
+        }
+
         auto IR = generateIR(std::move(ast));
         if (std::string_view{argv[1]}.starts_with("-l")) {
             IR.module->print(llvm::outs(), nullptr);

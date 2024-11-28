@@ -13,8 +13,7 @@ noTest:
 	cmake --build build -j16
 
 
-#CXX_FLAGS := -O3 -std=c++23 -march=native -mtune=native -flto=auto
-CXX_FLAGS := -O0 -std=c++23 -g
+CXX_FLAGS := -O3 -std=c++23 -march=native -mtune=native -flto=auto
 
 parser: 
 	$(CXX) -c -fPIC $(CXX_FLAGS) src/Parser/Scanner.cpp src/Parser/Parser.cpp src/Parser/AST.cpp	
@@ -23,5 +22,4 @@ parser:
 LLVM_CONFIG := llvm-config
 LLVM_FLAGS := $(shell $(LLVM_CONFIG) --cppflags --ldflags --libs)
 
-bc1: parser src/IRGenerator/*.h src/IRGenerator/*.cpp
-	$(CXX) $(CXX_FLAGS) AST.o Parser.o Scanner.o src/main.cpp src/IRGenerator/ValueTracker.cpp src/IRGenerator/SSAGeneration.cpp -o bc1 -I src $(LLVM_FLAGS)
+
