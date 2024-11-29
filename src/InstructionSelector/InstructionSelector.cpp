@@ -317,7 +317,7 @@ struct Compare64rr : public Pattern {
                                        {root->getOperand(0), root->getOperand(1)});
 
         auto* setcc =
-            builder.CreateCall(getInstruction(module, "SETcc8r", llvm::Type::getInt1Ty(module.getContext()),
+            builder.CreateCall(getInstruction(module, "SETcc8r", llvm::Type::getInt64Ty(module.getContext()),
                                               {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
@@ -331,7 +331,7 @@ struct Compare64rr : public Pattern {
                                               }),
                                {setcc, llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 1)});
 
-        root->replaceAllUsesWith(cmp);
+        root->replaceAllUsesWith(andInst);
         root->removeFromParent();
     }
     std::uint16_t getSize() override { return 1; }
