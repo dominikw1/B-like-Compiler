@@ -22,4 +22,5 @@ parser:
 LLVM_CONFIG := llvm-config
 LLVM_FLAGS := $(shell $(LLVM_CONFIG) --cppflags --ldflags --libs)
 
-
+bc2: parser
+	$(CXX) $(CXX_FLAGS) AST.o Parser.o Scanner.o src/main.cpp src/IRGenerator/ValueTracker.cpp src/IRGenerator/SSAGeneration.cpp src/InstructionSelector/InstructionSelector.cpp  -o bc2 -I src $(LLVM_FLAGS)

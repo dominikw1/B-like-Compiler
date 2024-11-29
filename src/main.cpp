@@ -33,6 +33,10 @@ int main(int argc, char** argv) {
             IR.module->print(llvm::outs(), nullptr);
             return EXIT_SUCCESS;
         }
+
+        doInstructionSelection(*IR.module);
+        IR.module->print(llvm::outs(), nullptr);
+
         return EXIT_SUCCESS;
     } catch (std::exception& e) {
         std::cerr << e.what() << "\n";

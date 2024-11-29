@@ -10,4 +10,5 @@ target_link_libraries(
     Compiler
     Parser
     IRGenerator
+    InstructionSelector
 )

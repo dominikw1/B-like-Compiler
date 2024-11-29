@@ -200,9 +200,9 @@ class SSAGenerator {
         llvm::Value* inner = generateExpression(*unOp.operand);
         switch (unOp.type) {
         case TokenType::Minus:
-            return builder.CreateNeg(inner);
+            return builder.CreateNeg(castToInt64(inner));
         case TokenType::Tilde:
-            return builder.CreateNot(inner);
+            return builder.CreateNot(castToInt64(inner));
         case TokenType::Exclamation_Mark:
             return builder.CreateICmpEQ(inner, fromInt(0, inner->getType()));
         default:
