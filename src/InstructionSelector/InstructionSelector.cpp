@@ -337,7 +337,7 @@ struct Compare64rr : public Pattern {
     std::uint16_t getSize() override { return 1; }
 };
 
-struct Zext : public Pattern {
+struct Zext : public Pattern { // TODO: replace by  actual zext
     std::unordered_map<llvm::Value*, std::size_t> bitsExtendedFrom;
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::ZExtInst>(root)) {
@@ -376,6 +376,54 @@ struct Zext : public Pattern {
     std::uint16_t getSize() override { return 1; }
 };
 
+struct AllocaDummy : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::AllocaInst>(root)) {
+            return true;
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {}
+    std::uint16_t getSize() override { return 1; }
+};
+
+struct Loadrm : public Pattern {
+    bool matches(llvm::Value* rootVal) override {
+        if (auto* root = dyn_cast<llvm::LoadInst>(rootVal)) {
+            if (root->getType() != llvm::Type::getInt64Ty(root->getContext())) {
+                throw std::runtime_error("load not 64 bit");
+            }
+            return true;
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
+        covered.insert(rootVal);
+    }
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        auto* root = cast<llvm::LoadInst>(rootVal);
+
+        llvm::IRBuilder<> buider{root};
+        auto* load = buider.CreateCall(
+            getInstruction(module, "MOV64mr", llvm::Type::getVoidTy(module.getContext()),
+                           {
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                           }),
+            {root->getPointerOperand(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
+             llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
+             llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), root->getOperand(1)});
+        root->replaceAllUsesWith(load);
+        root->removeFromParent();
+    }
+    std::uint16_t getSize() override { return 1; }
+};
+
 std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     std::vector<std::unique_ptr<Pattern>> patterns;
     patterns.push_back(std::make_unique<ADD64rr>());
@@ -387,6 +435,8 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<XOR64ri>());
     patterns.push_back(std::make_unique<Compare64rr>());
     patterns.push_back(std::make_unique<Zext>());
+    patterns.push_back(std::make_unique<Loadrm>());
+    patterns.push_back(std::make_unique<AllocaDummy>());
     std::sort(patterns.begin(), patterns.end(),
               [](const std::unique_ptr<Pattern>& p1, const std::unique_ptr<Pattern>& p2) {
                   return p1->getSize() > p2->getSize();
@@ -421,6 +471,7 @@ void selectValue(llvm::Value* val, Context& context, llvm::Value* parent,
                                     [val](const std::unique_ptr<Pattern>& pattern) { return pattern->matches(val); });
         if (pattern == patterns.end()) {
             val->print(llvm::errs());
+            llvm::errs() << "\n";
             throw std::runtime_error("could not select Value");
         }
         context.selected.insert(val);
@@ -432,6 +483,9 @@ void selectValue(llvm::Value* val, Context& context, llvm::Value* parent,
 void selectInstruction(llvm::Instruction& instr, Context& context, std::unordered_set<llvm::Value*>& localCovered) {
     if (context.selected.contains(&instr))
         return; // already selected - no need to select for it
+    llvm::errs() << " selecting ";
+    instr.print(llvm::errs());
+    llvm::errs() << " \n";
     if (instr.getOpcode() != llvm::Instruction::Ret && !localCovered.contains(&instr)) {
         auto pattern =
             std::find_if(patterns.begin(), patterns.end(),
@@ -444,7 +498,10 @@ void selectInstruction(llvm::Instruction& instr, Context& context, std::unordere
         context.selectionMap.emplace_back(&instr, pattern->get(), nullptr);
         (*pattern)->markCovered(&instr, localCovered);
     }
+    if (dyn_cast<llvm::AllocaInst>(&instr))
+        return;
     for (auto& operand : instr.operands()) {
+        llvm::errs() << "selecitng oeprands\n";
         selectValue(operand, context, &instr, localCovered);
     }
 }
@@ -479,6 +536,7 @@ std::vector<llvm::Instruction*> extractRoots(llvm::Function& func) {
 void selectFunction(llvm::Function& func) {
     Context context;
     auto roots = extractRoots(func);
+
     for (auto& root : roots) {
         std::unordered_set<llvm::Value*> localCovered;
         selectInstruction(*root, context, localCovered);
@@ -486,6 +544,14 @@ void selectFunction(llvm::Function& func) {
 
     for (auto& [val, pattern, parent] : std::views::reverse(context.selectionMap)) {
         pattern->replace(*func.getParent(), val, parent);
+    }
+
+    std::vector<llvm::AllocaInst*> allocas;
+
+    for (auto& instr : func.getEntryBlock()) {
+        if (auto* alloca = dyn_cast<llvm::AllocaInst>(&instr)) {
+            allocas.push_back(alloca);
+        }
     }
 
     // i64 FRAME_SETUP(numStackArgs, stackFrameSize, stackArg0, stackArg1, ...)
@@ -500,11 +566,30 @@ void selectFunction(llvm::Function& func) {
                        {
                            llvm::Type::getInt64Ty(func.getContext()),
                        });
-    std::uint64_t stackSize = 10;
     auto* framepointer =
         llvm::IRBuilder<>{&func.getEntryBlock(), func.getEntryBlock().getFirstInsertionPt()}.CreateCall(
-            frame_setup_func, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), stackSize),
+            frame_setup_func, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), allocas.size() * 8),
                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
+
+    llvm::IRBuilder<> builder{func.getContext()};
+    // replace all allocas by fp + offset
+    for (auto [i, alloca] : std::views::enumerate(allocas)) {
+        builder.SetInsertPoint(alloca);
+
+        auto ptr =
+            builder.CreateCall(getInstruction(*func.getParent(), "LEA64rm", llvm::Type::getInt64Ty(func.getContext()),
+                                              {
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                              }),
+                               {framepointer, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 8),
+                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), i),
+                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
+        alloca->replaceAllUsesWith(ptr);
+        alloca->removeFromParent();
+    }
 
     for (auto& bb : func) {
         for (auto& instr : llvm::make_early_inc_range(bb)) {
