@@ -1,5 +1,6 @@
 #include "IRGenerator/SSAGeneration.h"
 #include "InstructionSelector/InstructionSelector.h"
+#include "Optimizer/Optimizer.h"
 #include "Parser/AST.h"
 #include "Parser/Parser.h"
 #include "Parser/Scanner.h"
@@ -34,6 +35,7 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
 
+        optimize(IR.module.get());
         doInstructionSelection(*IR.module);
         IR.module->print(llvm::outs(), nullptr);
 
