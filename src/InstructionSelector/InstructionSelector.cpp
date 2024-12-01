@@ -1,4 +1,5 @@
 #include "InstructionSelector.h"
+#include "llvm/IR/Verifier.h"
 #include <cstdint>
 #include <iostream>
 #include <llvm/IR/IRBuilder.h>
@@ -77,7 +78,7 @@ struct ADD64rr : public Pattern {
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
         root->replaceAllUsesWith(call);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; } // just the plus
 };
@@ -124,7 +125,7 @@ struct ADD64ri : public Pattern {
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
         root->replaceAllUsesWith(call);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 2; } // + and one constant
 };
@@ -202,7 +203,7 @@ struct SUB64rr : public Pattern {
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
         root->replaceAllUsesWith(call);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; } // just the minus
 };
@@ -249,7 +250,7 @@ struct SUB64ri : public Pattern {
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
         root->replaceAllUsesWith(call);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 2; } // + and one constant
 };
@@ -277,7 +278,7 @@ struct XOR64rr : public Pattern {
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
         root->replaceAllUsesWith(call);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; } // just the minus
 };
@@ -326,7 +327,7 @@ struct XOR64ri : public Pattern {
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
         root->replaceAllUsesWith(call);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 2; }
 };
@@ -393,7 +394,7 @@ struct Compare64rr : public Pattern {
                                {setcc, llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 1)});
 
         root->replaceAllUsesWith(andInst);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -430,7 +431,7 @@ struct Zext : public Pattern { // TODO: replace by  actual zext
                                                                             (1ull << bitsExtendedFrom[root]) - 1)});
 
         root->replaceAllUsesWith(zext);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -474,7 +475,7 @@ struct Sext : public Pattern {
                                {root->getOperand(0)});
 
         root->replaceAllUsesWith(sext);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -514,7 +515,9 @@ struct PhiDummy : public Pattern {
     }
     void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
 
-    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {}
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        cast<llvm::PHINode>(rootVal)->mutateType(llvm::Type::getInt64Ty(module.getContext()));
+    }
     std::uint16_t getSize() override { return 1; }
 };
 
@@ -531,7 +534,7 @@ struct PtrToIntDummy : public Pattern {
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
         auto* ptrtoInt = cast<llvm::PtrToIntInst>(rootVal);
         ptrtoInt->replaceAllUsesWith(ptrtoInt->getPointerOperand());
-        ptrtoInt->removeFromParent();
+        ptrtoInt->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -548,7 +551,7 @@ struct IntToPTrDummy : public Pattern {
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
         auto* intCast = cast<llvm::IntToPtrInst>(rootVal);
         intCast->replaceAllUsesWith(intCast->getOperand(0));
-        intCast->removeFromParent();
+        intCast->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -626,7 +629,7 @@ struct Loadrm : public Pattern {
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
         root->replaceAllUsesWith(load);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -678,7 +681,7 @@ struct Storemr : public Pattern {
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), root->getOperand(0)});
         root->replaceAllUsesWith(store);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -741,7 +744,7 @@ struct Storemi : public Pattern {
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
         root->replaceAllUsesWith(store);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 2; }
 };
@@ -778,7 +781,7 @@ struct GEP : public Pattern {
              *root->idx_begin(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
 
         root->replaceAllUsesWith(ptr);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 1; }
 };
@@ -819,7 +822,7 @@ struct GEPi : public Pattern {
                                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
 
         root->replaceAllUsesWith(ptr);
-        root->removeFromParent();
+        root->eraseFromParent();
     }
     std::uint16_t getSize() override { return 2; }
 };
@@ -982,12 +985,36 @@ void selectFunction(llvm::Function& func) {
                        {
                            llvm::Type::getInt64Ty(func.getContext()),
                        });
-    auto* framepointer =
-        llvm::IRBuilder<>{&func.getEntryBlock(), func.getEntryBlock().getFirstInsertionPt()}.CreateCall(
-            frame_setup_func, {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), allocas.size() * 8),
-                               llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
 
-    llvm::IRBuilder<> builder{func.getContext()};
+    std::uint64_t numArgs = func.arg_size();
+    std::vector<llvm::Value*> frame_setup_args = {
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), allocas.size() * 8),
+        llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), (numArgs <= 6) ? 0 : numArgs - 6)};
+    for (size_t i = 6; i < numArgs; ++i) {
+        frame_setup_args.push_back(func.getArg(i));
+    }
+
+    llvm::IRBuilder<> builder{&func.getEntryBlock(), func.getEntryBlock().getFirstInsertionPt()};
+    auto* framepointer = builder.CreateCall(frame_setup_func, std::move(frame_setup_args));
+
+    // replace all stack arguments with framepointer offset
+    for (size_t i = 6; i < numArgs; ++i) {
+        auto loadedVal =
+            builder.CreateCall(getInstruction(*func.getParent(), "MOV64rm", llvm::Type::getInt64Ty(func.getContext()),
+                                              {
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                              }),
+                               {framepointer, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 8),
+                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), (i - 6)),
+                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 16)});
+        auto* arg = func.getArg(i);
+        arg->replaceAllUsesWith(loadedVal);
+        framepointer->setArgOperand(2 + (i - 6), arg); // reset it to the actual arg
+    }
+
     // replace all allocas by fp + offset
     for (auto [i, alloca] : std::views::enumerate(allocas)) {
         builder.SetInsertPoint(alloca);
@@ -1004,7 +1031,7 @@ void selectFunction(llvm::Function& func) {
                                 llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), -i - 1),
                                 llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
         alloca->replaceAllUsesWith(ptr);
-        alloca->removeFromParent();
+        alloca->eraseFromParent();
     }
 
     for (auto& bb : func) {
@@ -1020,5 +1047,10 @@ void doInstructionSelection(llvm::Module& module) {
     for (auto& func : module) {
         if (!func.isDeclaration())
             selectFunction(func);
+    }
+    if (llvm::verifyModule(module, &llvm::errs())) {
+        //module.print(llvm::errs(), nullptr);
+
+       // throw std::runtime_error("Invalid IR!");
     }
 }
