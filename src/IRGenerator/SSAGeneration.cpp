@@ -67,7 +67,7 @@ class SSAGenerator {
 
     SizespecInfo handleSizespec(llvm::Value* arrayPointer, const AST::BinaryOperator& sizespec) {
         assert(sizespec.operand2->getType() == AST::ExpressionType::Value);
-        std::uint8_t sizespecSize = static_cast<const AST::Value&>(*sizespec.operand2).val;
+        std::uint16_t sizespecSize = static_cast<const AST::Value&>(*sizespec.operand2).val;
         llvm::Value* scalee = generateExpression(*sizespec.operand1);
         llvm::Type* type = [sizespecSize, &context = *context]() {
             switch (sizespecSize) {
@@ -83,6 +83,7 @@ class SSAGenerator {
                 throw std::runtime_error("erroneous sizespec");
             }
         }();
+        // scalee->mutateType(type);
         return SizespecInfo{builder.CreateGEP(type, arrayPointer, {scalee}), type};
     }
 
@@ -180,7 +181,7 @@ class SSAGenerator {
             }
             if (!isSizespec(arrayIndexing)) {
                 llvm::Value* index = generateExpression(*arrayIndexing.index);
-                return builder.CreateGEP(llvm::Type::getInt64Ty(*context), arrayPointer, {index});
+                return builder.CreateGEP(index->getType(), arrayPointer, {index});
             } else {
                 auto ssInfo =
                     handleSizespec(arrayPointer, static_cast<const AST::BinaryOperator&>(*arrayIndexing.index));
@@ -455,6 +456,9 @@ class SSAGenerator {
     llvm::Value* createSextIfNecessary(llvm::Value* castee, llvm::Type* type) {
         if (castee->getType() == type)
             return castee;
+        if (castee->getType() == llvm::Type::getInt1Ty(castee->getContext())) {
+            return builder.CreateZExt(castee, type);
+        }
         return builder.CreateSExt(castee, type);
     }
 
