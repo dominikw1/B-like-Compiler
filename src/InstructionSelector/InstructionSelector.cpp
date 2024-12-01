@@ -1009,7 +1009,7 @@ void selectFunction(llvm::Function& func) {
 
     for (auto& bb : func) {
         for (auto& instr : llvm::make_early_inc_range(bb)) {
-            if(instr.getOpcode() == llvm::Instruction::Ret) {
+            if (instr.getOpcode() == llvm::Instruction::Ret) {
                 llvm::IRBuilder<>{&instr}.CreateCall(frame_destroy_func, {framepointer});
             }
         }

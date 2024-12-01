@@ -1,6 +1,5 @@
 #include "AST.h"
 #include <algorithm>
-#include <execution>
 #include <ranges>
 #include <string>
 #include <unordered_set>
@@ -10,10 +9,9 @@
     do {                                                                                                               \
         if (NODE_IS(node, Name)) {                                                                                     \
             auto& lit = NODE_AS_REF(node, Name).literal;                                                               \
-            if (scope.getFunction(lit)) {                                                                              \
-                throw std::runtime_error("Function found where variable expected");                                    \
+            if (!scope.getOrTransformVariable(lit) && scope.getFunction(lit)) {                                        \
+                throw std::runtime_error(std::format("Function {} found where variable expected", lit));               \
             }                                                                                                          \
-            scope.getOrTransformVariable(lit);                                                                         \
         }                                                                                                              \
     } while (0);
 
@@ -313,14 +311,10 @@ void Function::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
         const auto& parenthesised = *NODE_AS_REF(argList.value(), Parenthesised).inner;
         if (NODE_IS(parenthesised, Name)) {
             const auto& parName = NODE_AS_REF(parenthesised, Name);
-            ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(parenthesised, scope);
             scope.undecidedParams.insert(parName.literal);
         } else {
             auto& commaList = NODE_AS_REF(parenthesised, CommaList);
-            if (!commaList.assertForAllElems([&](const Node& n) {
-                    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(n, scope);
-                    return NODE_IS(n, Name);
-                })) {
+            if (!commaList.assertForAllElems([&](const Node& n) { return NODE_IS(n, Name); })) {
                 throw std::runtime_error("Parameters must be non-function identifiers");
             }
             const auto& names = commaList.getAllNamesOnTopLevel();
@@ -435,8 +429,6 @@ CommaList::CommaList(Node left, Node right) : left{std::move(left)}, right{std::
 
 void CommaList::doAnalysis(SymbolScope& scope, std::uint32_t depth) {
     left->doAnalysis(*scope.duplicate(), depth);
-    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(left, scope);
-    ASSERT_NAME_IS_NOT_FUNCTION_IF_NAME(right, scope);
     right->doAnalysis(*scope.duplicate(), depth);
 }
 Parenthesised::Parenthesised(std::optional<Node> inner) : inner{std::move(inner)} {
