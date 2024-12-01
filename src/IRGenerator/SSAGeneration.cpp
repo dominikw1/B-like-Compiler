@@ -524,7 +524,7 @@ class SSAGenerator {
                 builder.CreateRet(createSextIfNecessary(generateExpression(*returnStatement.what.value()),
                                                         llvm::Type::getInt64Ty(*context)));
             } else {
-                builder.CreateRetVoid();
+                builder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0));
             }
             return false;
         }
@@ -559,19 +559,13 @@ class SSAGenerator {
         std::string_view funcName = static_cast<const AST::Name&>(*func.name).literal;
         auto paramNames = extractParameterNamesFromFunction(func);
         size_t numParams = paramNames.size();
-        if (undecidedFunctionReturnTypes.contains(funcName)) {
-            if (func.isVoid) {
-                std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
-                auto correctType = llvm::FunctionType::get(llvm::Type::getVoidTy(*context), parameters, false);
-                module->getFunction(funcName)->mutateType(correctType);
-            }
-        }
+
         if (auto* func = module->getFunction(funcName)) {
             std::cerr << "function already exists...\n";
         }
+
         std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
-        auto type = llvm::FunctionType::get(
-            !func.isVoid ? llvm::Type::getInt64Ty(*context) : llvm::Type::getVoidTy(*context), parameters, false);
+        auto type = llvm::FunctionType::get(llvm::Type::getInt64Ty(*context), parameters, false);
         llvm::FunctionCallee funcCallee = module->getOrInsertFunction(funcName, type);
 
         currFunc = dyn_cast<llvm::Function>(funcCallee.getCallee());
@@ -594,7 +588,7 @@ class SSAGenerator {
         }
 
         if (!currBlock->getTerminator()) {
-            builder.CreateRetVoid();
+            builder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), 0));
         }
     }
 

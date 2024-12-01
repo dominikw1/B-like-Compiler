@@ -130,19 +130,21 @@ struct ADD64ri : public Pattern {
 };
 
 struct MOV64ri : public Pattern {
-    bool matches(llvm::Value* rootVal) override { return isConst(rootVal) && rootVal->getType()->isIntegerTy(64); }
+    bool matches(llvm::Value* rootVal) override { return isConst(rootVal) && rootVal->getType()->isIntegerTy(); }
     void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
         covered.insert(rootVal);
     }
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
         assert(parent);
         auto* parentInst = cast<llvm::Instruction>(parent);
-        auto* call = llvm::IRBuilder<>{parentInst}.CreateCall(
-            getInstruction(module, "MOV64ri", llvm::Type::getInt64Ty(module.getContext()),
-                           {
-                               llvm::Type::getInt64Ty(module.getContext()),
-                           }),
-            {rootVal});
+        rootVal->mutateType(llvm::Type::getInt64Ty(module.getContext()));
+        llvm::IRBuilder<> builder{module.getContext()};
+        builder.SetInsertPoint(parentInst->getFunction()->getEntryBlock().getFirstInsertionPt());
+        auto* call = builder.CreateCall(getInstruction(module, "MOV64ri", llvm::Type::getInt64Ty(module.getContext()),
+                                                       {
+                                                           llvm::Type::getInt64Ty(module.getContext()),
+                                                       }),
+                                        {rootVal});
         for (size_t i = 0; i < parentInst->getNumOperands(); ++i) {
             if (parentInst->getOperand(i) == rootVal) {
                 parentInst->setOperand(i, call);
@@ -353,7 +355,14 @@ struct Compare64rr : public Pattern {
         case llvm::ICmpInst::ICMP_NE:
             cond_code = 5;
             break;
+        case llvm::ICmpInst::ICMP_SLT:
+            cond_code = 12;
+            break;
+        case llvm::ICmpInst::ICMP_SGT:
+            cond_code = 15;
+            break;
         default:
+            cmpInst->print(llvm::errs());
             throw std::runtime_error("unknown icmp");
         }
 
@@ -483,6 +492,32 @@ struct AllocaDummy : public Pattern {
     std::uint16_t getSize() override { return 1; }
 };
 
+struct CallDummy : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::CallInst>(root)) {
+            return true;
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {}
+    std::uint16_t getSize() override { return 1; }
+};
+
+struct PhiDummy : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::PHINode>(root)) {
+            return true;
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {}
+    std::uint16_t getSize() override { return 1; }
+};
+
 struct PtrToIntDummy : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::PtrToIntInst>(root)) {
@@ -552,10 +587,10 @@ struct Br : public Pattern {
 };
 
 struct Loadrm : public Pattern {
-    std::unordered_map<llvm::Value* , std::uint64_t> bytesLoadedFrom;
+    std::unordered_map<llvm::Value*, std::uint64_t> bytesLoadedFrom;
     bool matches(llvm::Value* rootVal) override {
         if (auto* root = dyn_cast<llvm::LoadInst>(rootVal)) {
-            
+
             return true;
         }
         return false;
@@ -810,6 +845,8 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<PtrToIntDummy>());
     patterns.push_back(std::make_unique<IntToPTrDummy>());
     patterns.push_back(std::make_unique<Sext>());
+    patterns.push_back(std::make_unique<PhiDummy>());
+    patterns.push_back(std::make_unique<CallDummy>());
 
     std::sort(patterns.begin(), patterns.end(),
               [](const std::unique_ptr<Pattern>& p1, const std::unique_ptr<Pattern>& p2) {
@@ -832,6 +869,8 @@ void selectInstruction(llvm::Instruction& instr, Context& context, std::unordere
 
 void selectValue(llvm::Value* val, Context& context, llvm::Value* parent,
                  std::unordered_set<llvm::Value*>& localCovered) {
+    if (dyn_cast<llvm::Function>(val)) // in calls
+        return;
     if (auto* instr = dyn_cast<llvm::Instruction>(val))
         selectInstruction(*instr, context, localCovered);
     else {
@@ -848,6 +887,7 @@ void selectValue(llvm::Value* val, Context& context, llvm::Value* parent,
                                     [val](const std::unique_ptr<Pattern>& pattern) { return pattern->matches(val); });
         if (pattern == patterns.end()) {
             val->print(llvm::errs());
+            llvm::errs() << "\n";
             throw std::runtime_error("could not select Value");
         }
         context.selected.insert(val);
@@ -908,7 +948,7 @@ std::vector<llvm::Instruction*> extractRoots(llvm::Function& func) {
 void selectFunction(llvm::Function& func) {
     Context context;
     auto roots = extractRoots(func);
-
+    llvm::errs() << "selecting func " << func.getName() << "\n";
     for (auto& root : roots) {
         llvm::errs() << "starting selecting ...\n";
         std::unordered_set<llvm::Value*> localCovered;
@@ -969,7 +1009,7 @@ void selectFunction(llvm::Function& func) {
 
     for (auto& bb : func) {
         for (auto& instr : llvm::make_early_inc_range(bb)) {
-            if (instr.getOpcode() == llvm::Instruction::Ret) {
+            if(instr.getOpcode() == llvm::Instruction::Ret) {
                 llvm::IRBuilder<>{&instr}.CreateCall(frame_destroy_func, {framepointer});
             }
         }
