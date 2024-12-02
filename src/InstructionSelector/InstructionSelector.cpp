@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+std::unordered_map<llvm::Value*, std::unordered_set<llvm::Value*>> correctImmediates;
+
 std::uint8_t getBytesFromIntType(llvm::Type* type) {
     if (dyn_cast<llvm::PointerType>(type)) {
         return 8; // 64 bit
@@ -69,6 +71,7 @@ struct ADD64rr : public Pattern {
     void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
 
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
         auto* root = cast<llvm::Instruction>(rootVal);
         auto* call = llvm::IRBuilder<>{root}.CreateCall(getInstruction(module, "ADD64rr",
                                                                        llvm::Type::getInt64Ty(module.getContext()),
@@ -95,6 +98,7 @@ struct ADD64ri : public Pattern {
                 if (notConst(immediate)) {
                     immediate = root->getOperand(1);
                 }
+                assert(dyn_cast<llvm::ConstantInt>(immediate));
                 auto* intVal = cast<llvm::ConstantInt>(immediate);
                 auto rawVal = intVal->getSExtValue();
                 return rawVal >= INT32_MIN && rawVal <= INT32_MAX;
@@ -103,14 +107,19 @@ struct ADD64ri : public Pattern {
         return false;
     }
     void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
-        if (isConst(root->getOperand(0)))
+        if (isConst(root->getOperand(0))) {
+            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
-        else
+        } else {
+            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
+        }
     }
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
         auto* root = cast<llvm::Instruction>(rootVal);
         llvm::Value* immediate = root->getOperand(0);
         llvm::Value* registerVal = root->getOperand(1);
@@ -136,7 +145,8 @@ struct MOV64ri : public Pattern {
         covered.insert(rootVal);
     }
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
-        assert(parent);
+        /*assert(parent);
+        assert(dyn_cast<llvm::Instruction>(parent));
         auto* parentInst = cast<llvm::Instruction>(parent);
         rootVal->mutateType(llvm::Type::getInt64Ty(module.getContext()));
         llvm::IRBuilder<> builder{module.getContext()};
@@ -146,12 +156,13 @@ struct MOV64ri : public Pattern {
                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                        }),
                                         {rootVal});
+        correctImmediates[call].insert(rootVal);
         for (size_t i = 0; i < parentInst->getNumOperands(); ++i) {
             if (parentInst->getOperand(i) == rootVal) {
                 parentInst->setOperand(i, call);
                 break;
             }
-        }
+        }*/
     }
     std::uint16_t getSize() override { return 1; } // one constant
 };
@@ -170,6 +181,7 @@ struct MOV32ri : public Pattern {
                                llvm::Type::getInt64Ty(module.getContext()),
                            }),
             {rootVal});
+        correctImmediates[call].insert(rootVal);
         for (size_t i = 0; i < parentInst->getNumOperands(); ++i) {
             if (parentInst->getOperand(i) == rootVal) {
                 parentInst->setOperand(i, call);
@@ -249,6 +261,7 @@ struct SUB64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(immediate);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -326,6 +339,7 @@ struct XOR64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(immediate);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -384,7 +398,7 @@ struct Compare64rr : public Pattern {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
                                {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), cond_code)});
-
+        correctImmediates[setcc].insert(setcc->getOperand(0));
         auto* andInst =
             builder.CreateCall(getInstruction(module, "AND64ri", llvm::Type::getInt64Ty(module.getContext()),
                                               {
@@ -392,7 +406,7 @@ struct Compare64rr : public Pattern {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
                                {setcc, llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 1)});
-
+        correctImmediates[andInst].insert(andInst->getOperand(1));
         root->replaceAllUsesWith(andInst);
         root->eraseFromParent();
     }
@@ -429,7 +443,7 @@ struct Zext : public Pattern { // TODO: replace by  actual zext
                                               }),
                                {root->getOperand(0), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()),
                                                                             (1ull << bitsExtendedFrom[root]) - 1)});
-
+        correctImmediates[zext].insert(zext->getOperand(1));
         root->replaceAllUsesWith(zext);
         root->eraseFromParent();
     }
@@ -576,7 +590,7 @@ struct Br : public Pattern {
                                    llvm::Type::getInt64Ty(module.getContext()),
                                }),
                 {br->getCondition(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
-
+            correctImmediates[cmp].insert(cmp->getOperand(1));
             auto* jcc = builder.CreateCall(getInstruction(module, "Jcc", llvm::Type::getInt1Ty(module.getContext()),
                                                           {
                                                               llvm::Type::getInt64Ty(module.getContext()),
@@ -584,6 +598,7 @@ struct Br : public Pattern {
                                                           }),
                                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 5)});
             br->setCondition(jcc);
+            correctImmediates[jcc].insert(jcc->getOperand(0));
         }
     }
     std::uint16_t getSize() override { return 1; }
@@ -593,7 +608,6 @@ struct Loadrm : public Pattern {
     std::unordered_map<llvm::Value*, std::uint64_t> bytesLoadedFrom;
     bool matches(llvm::Value* rootVal) override {
         if (auto* root = dyn_cast<llvm::LoadInst>(rootVal)) {
-
             return true;
         }
         return false;
@@ -628,6 +642,9 @@ struct Loadrm : public Pattern {
             {root->getPointerOperand(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
+        correctImmediates[load].insert(load->getOperand(1));
+        correctImmediates[load].insert(load->getOperand(2));
+        correctImmediates[load].insert(load->getOperand(3));
         root->replaceAllUsesWith(load);
         root->eraseFromParent();
     }
@@ -643,11 +660,13 @@ struct Storemr : public Pattern {
         return false;
     }
     void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
+        assert(dyn_cast<llvm::StoreInst>(rootVal));
         byteStoreMap[cast<llvm::StoreInst>(rootVal)] =
             getBytesFromIntType(cast<llvm::StoreInst>(rootVal)->getOperand(0)->getType());
         covered.insert(rootVal);
     }
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::StoreInst>(rootVal));
         auto* root = cast<llvm::StoreInst>(rootVal);
 
         llvm::IRBuilder<> buider{root};
@@ -680,6 +699,9 @@ struct Storemr : public Pattern {
             {root->getPointerOperand(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), root->getOperand(0)});
+        correctImmediates[store].insert(store->getOperand(1));
+        correctImmediates[store].insert(store->getOperand(2));
+        correctImmediates[store].insert(store->getOperand(3));
         root->replaceAllUsesWith(store);
         root->eraseFromParent();
     }
@@ -688,6 +710,7 @@ struct Storemr : public Pattern {
 
 struct Storemi : public Pattern {
     std::unordered_map<llvm::StoreInst*, std::uint8_t> byteStoreMap;
+    std::unordered_map<llvm::StoreInst*, llvm::Value*> immedateStore; // if it is replaced by another pattern ig?
     bool matches(llvm::Value* rootVal) override {
         if (auto* root = dyn_cast<llvm::StoreInst>(rootVal)) {
             return dyn_cast<llvm::ConstantInt>(root->getOperand(0));
@@ -696,13 +719,16 @@ struct Storemi : public Pattern {
     }
 
     void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
+        assert(dyn_cast<llvm::StoreInst>(rootVal));
         byteStoreMap[cast<llvm::StoreInst>(rootVal)] =
             getBytesFromIntType(cast<llvm::StoreInst>(rootVal)->getOperand(0)->getType());
         covered.insert(rootVal);
         covered.insert(cast<llvm::StoreInst>(rootVal)->getOperand(0));
+        immedateStore[cast<llvm::StoreInst>(rootVal)] = cast<llvm::StoreInst>(rootVal)->getOperand(0);
     }
 
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::StoreInst>(rootVal));
         auto* root = cast<llvm::StoreInst>(rootVal);
         llvm::IRBuilder<> buider{root};
 
@@ -721,8 +747,11 @@ struct Storemi : public Pattern {
             instr = "MOV8mi";
             break;
         }
-        std::uint64_t bytes = getBytesFromIntType(root->getOperand(0)->getType());
-        std::int64_t val = cast<llvm::ConstantInt>(root->getOperand(0))->getSExtValue();
+        auto* immVal = immedateStore[root];
+        std::uint64_t bytes = getBytesFromIntType(immVal->getType());
+        root->getOperand(0)->print(llvm::errs());
+        assert(dyn_cast<llvm::ConstantInt>(immVal));
+        std::int64_t val = cast<llvm::ConstantInt>(immVal)->getSExtValue();
         auto [min, max] = getMinMaxValWithByteRange(bytes);
         assert(val >= min && val <= max);
 
@@ -743,6 +772,12 @@ struct Storemi : public Pattern {
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
+
+        correctImmediates[store].insert(store->getOperand(1));
+        correctImmediates[store].insert(store->getOperand(2));
+        correctImmediates[store].insert(store->getOperand(3));
+        correctImmediates[store].insert(store->getOperand(4));
+
         root->replaceAllUsesWith(store);
         root->eraseFromParent();
     }
@@ -779,6 +814,9 @@ struct GEP : public Pattern {
             {root->getPointerOperand(),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), byteStoreMap[root]),
              *root->idx_begin(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
+
+        correctImmediates[ptr].insert(ptr->getOperand(1));
+        correctImmediates[ptr].insert(ptr->getOperand(3));
 
         root->replaceAllUsesWith(ptr);
         root->eraseFromParent();
@@ -821,6 +859,9 @@ struct GEPi : public Pattern {
                                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
                                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
 
+        correctImmediates[ptr].insert(ptr->getOperand(1));
+        correctImmediates[ptr].insert(ptr->getOperand(2));
+        correctImmediates[ptr].insert(ptr->getOperand(3));
         root->replaceAllUsesWith(ptr);
         root->eraseFromParent();
     }
@@ -872,30 +913,15 @@ void selectInstruction(llvm::Instruction& instr, Context& context, std::unordere
 
 void selectValue(llvm::Value* val, Context& context, llvm::Value* parent,
                  std::unordered_set<llvm::Value*>& localCovered) {
-    if (dyn_cast<llvm::Function>(val)) // in calls
+    if (dyn_cast<llvm::Function>(val) || dyn_cast<llvm::BasicBlock>(val)) // in calls / br
         return;
     if (auto* instr = dyn_cast<llvm::Instruction>(val))
         selectInstruction(*instr, context, localCovered);
     else {
-        if (context.selected.contains(val)) {
-            // regenerating selected value???
-            // return;
+        if (dyn_cast<llvm::Argument>(val)) {
+            return;
         }
-        if (notConst(val) || localCovered.contains(val)) {
-            // val->print(llvm::errs());
-            return; // TODO: fix this - there are parameters that are passed on stack...
-        }
-        // constants that werent picked up yet ig...
-        auto pattern = std::find_if(patterns.begin(), patterns.end(),
-                                    [val](const std::unique_ptr<Pattern>& pattern) { return pattern->matches(val); });
-        if (pattern == patterns.end()) {
-            val->print(llvm::errs());
-            llvm::errs() << "\n";
-            throw std::runtime_error("could not select Value");
-        }
-        context.selected.insert(val);
-        context.selectionMap.emplace_back(val, pattern->get(), parent);
-        (*pattern)->markCovered(val, localCovered);
+        // else do nothing now ig
     }
 }
 
@@ -933,6 +959,42 @@ void dfs(std::unordered_set<llvm::Value*>& visited, llvm::Value* curr) {
     }
 }
 
+void fixupConstants(llvm::Function& func) {
+    std::unordered_map<std::int64_t, llvm::Value*> constants;
+    for (auto& bb : func) {
+        for (auto& instr : bb) {
+            if (dyn_cast<llvm::AllocaInst>(&instr))
+                continue;
+            for (auto [i, op] : std::views::enumerate(instr.operands())) {
+
+                if (auto* constInt = dyn_cast<llvm::ConstantInt>(op)) {
+                    if (correctImmediates[&instr].contains(op)) {
+                        continue;
+                    }
+                    if (!constants.contains(constInt->getSExtValue())) {
+                        llvm::IRBuilder<> builder{func.getContext()};
+                        builder.SetInsertPoint(func.getEntryBlock().getFirstInsertionPt());
+                        auto* call = builder.CreateCall(
+                            getInstruction(*func.getParent(), "MOV64ri", llvm::Type::getInt64Ty(func.getContext()),
+                                           {
+                                               llvm::Type::getInt64Ty(func.getContext()),
+                                           }),
+                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), constInt->getSExtValue(),
+                                                    true)});
+                        constants[constInt->getSExtValue()] = call;
+                    }
+                    llvm::errs() << "replacing constant int op  " << i << " :";
+                    constInt->print(llvm::errs());
+                    llvm::errs() << " in instr ";
+                    instr.print(llvm::errs());
+                    llvm::errs() << "\n";
+                    instr.setOperand(i, constants[constInt->getSExtValue()]);
+                }
+            }
+        }
+    }
+}
+
 std::vector<llvm::Instruction*> extractRoots(llvm::Function& func) {
     std::unordered_set<llvm::Value*> visited;
     std::vector<llvm::Instruction*> roots;
@@ -964,6 +1026,7 @@ void selectFunction(llvm::Function& func) {
         llvm::errs() << " \n";
         pattern->replace(*func.getParent(), val, parent);
     }
+    fixupConstants(func);
 
     std::vector<llvm::AllocaInst*> allocas;
 
@@ -1049,8 +1112,8 @@ void doInstructionSelection(llvm::Module& module) {
             selectFunction(func);
     }
     if (llvm::verifyModule(module, &llvm::errs())) {
-        //module.print(llvm::errs(), nullptr);
+        // module.print(llvm::errs(), nullptr);
 
-       // throw std::runtime_error("Invalid IR!");
+        // throw std::runtime_error("Invalid IR!");
     }
 }
