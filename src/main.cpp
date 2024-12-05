@@ -30,12 +30,13 @@ int main(int argc, char** argv) {
         }
 
         auto IR = generateIR(std::move(ast));
+        optimize(IR.module.get());
+        
         if (std::string_view{argv[1]}.starts_with("-l")) {
             IR.module->print(llvm::outs(), nullptr);
             return EXIT_SUCCESS;
         }
 
-        optimize(IR.module.get());
         doInstructionSelection(*IR.module);
         IR.module->print(llvm::outs(), nullptr);
 
