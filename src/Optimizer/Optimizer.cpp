@@ -11,6 +11,7 @@
 #include "llvm/Pass.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+
 namespace {
 void removeNoOps(llvm::Module* module) {
     for (auto& func : *module) {
@@ -114,7 +115,7 @@ void optimize(llvm::Module* module) {
 
     removeNoOps(module);
 
-   // trivialDCE(*module, FAM);
+    // trivialDCE(*module, FAM);
     // foldConstants(*module, FAM);
 
     if (llvm::verifyModule(*module, &llvm::errs())) {

@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace {
+
 std::unordered_map<llvm::Value*, std::unordered_set<llvm::Value*>> correctImmediates;
 
 std::uint8_t getBytesFromIntType(llvm::Type* type) {
@@ -62,8 +64,8 @@ struct ADD64rr : public Pattern {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
             if (rootInst->getOpcode() == llvm::Instruction::Add) {
                 return true; // TODO: is this ok?
-                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else use
-                //           imm
+                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else
+                //           use imm
             }
         }
         return false;
@@ -151,7 +153,8 @@ struct MOV64ri : public Pattern {
         rootVal->mutateType(llvm::Type::getInt64Ty(module.getContext()));
         llvm::IRBuilder<> builder{module.getContext()};
         builder.SetInsertPoint(parentInst->getFunction()->getEntryBlock().getFirstInsertionPt());
-        auto* call = builder.CreateCall(getInstruction(module, "MOV64ri", llvm::Type::getInt64Ty(module.getContext()),
+        auto* call = builder.CreateCall(getInstruction(module, "MOV64ri",
+        llvm::Type::getInt64Ty(module.getContext()),
                                                        {
                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                        }),
@@ -197,8 +200,8 @@ struct SUB64rr : public Pattern {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
             if (rootInst->getOpcode() == llvm::Instruction::Sub) {
                 return true; // TODO: is this ok?
-                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else use
-                //           imm
+                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else
+                //           use imm
             }
         }
         return false;
@@ -273,8 +276,8 @@ struct XOR64rr : public Pattern {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
             if (rootInst->getOpcode() == llvm::Instruction::Xor) {
                 return true; // TODO: is this ok?
-                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else use
-                //           imm
+                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else
+                //           use imm
             }
         }
         return false;
@@ -351,8 +354,8 @@ struct Compare64rr : public Pattern {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
             if (rootInst->getOpcode() == llvm::Instruction::ICmp) {
                 return true; // TODO: is this ok?
-                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else use
-                //           imm
+                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else
+                //           use imm
             }
         }
         return false;
@@ -1106,10 +1109,41 @@ void selectFunction(llvm::Function& func) {
     }
 }
 
+void cleanUp(llvm::Function& func) {
+    constexpr static auto cleanDoubleAndi = [](llvm::Instruction* inst) {
+        if (auto* call = dyn_cast<llvm::CallInst>(inst)) {
+            if (call->getCalledFunction()->getName() != "AND64ri") {
+                return;
+            }
+            // sometimes we have the case we get sth like
+            //  %4 = call i64 @SETcc8r(i64 4)
+            //  %5 = call i64 @AND64ri(i64 %4, i64 1)
+            //  %6 = call i64 @AND64ri(i64 %5, i64 1)
+            if (auto* operandCall = dyn_cast<llvm::CallInst>(call->getArgOperand(0))) {
+                if (operandCall->getCalledFunction()->getName() != "AND64ri") {
+                    return;
+                }
+                if (operandCall->getArgOperand(1) == call->getArgOperand(1)) {
+                    call->replaceAllUsesWith(operandCall);
+                    call->eraseFromParent();
+                }
+            }
+        }
+    };
+    for (auto& bb : func) {
+        for (auto& instr : llvm::make_early_inc_range(llvm::reverse(bb))) {
+            cleanDoubleAndi(&instr);
+        }
+    }
+}
+} // namespace
+
 void doInstructionSelection(llvm::Module& module) {
     for (auto& func : module) {
-        if (!func.isDeclaration())
+        if (!func.isDeclaration()) {
             selectFunction(func);
+            cleanUp(func);
+        }
     }
     if (llvm::verifyModule(module, &llvm::errs())) {
         // module.print(llvm::errs(), nullptr);
