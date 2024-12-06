@@ -13,6 +13,22 @@ namespace {
 
 std::unordered_map<llvm::Value*, std::unordered_set<llvm::Value*>> correctImmediates;
 
+std::uint64_t getCondCode(llvm::CmpInst* cmpInst) {
+    switch (cmpInst->getPredicate()) {
+    case llvm::ICmpInst::ICMP_EQ:
+        return 4;
+    case llvm::ICmpInst::ICMP_NE:
+        return 5;
+    case llvm::ICmpInst::ICMP_SLT:
+        return 12;
+    case llvm::ICmpInst::ICMP_SGT:
+        return 15;
+    default:
+        cmpInst->print(llvm::errs());
+        throw std::runtime_error("unknown icmp");
+    }
+}
+
 std::uint8_t getBytesFromIntType(llvm::Type* type) {
     if (dyn_cast<llvm::PointerType>(type)) {
         return 8; // 64 bit
@@ -37,8 +53,15 @@ std::pair<std::int64_t, std::int64_t> getMinMaxValWithByteRange(std::uint8_t byt
     throw std::runtime_error("wrong byte value");
 }
 
-constexpr bool notConst(llvm::Value* v) { return !dyn_cast<llvm::Constant>(v); }
-constexpr bool isConst(llvm::Value* v) { return nullptr != dyn_cast<llvm::Constant>(v); }
+constexpr bool notConst(llvm::Value* v) { return !dyn_cast<llvm::ConstantInt>(v); }
+constexpr bool isConst(llvm::Value* v) { return nullptr != dyn_cast<llvm::ConstantInt>(v); }
+constexpr bool isConstAndFits(llvm::Value* v) {
+    if (auto* intVal = dyn_cast<llvm::ConstantInt>(v)) {
+        auto val = intVal->getSExtValue();
+        return val >= INT32_MIN && val <= INT32_MAX;
+    }
+    return false;
+}
 
 struct Pattern {
     virtual bool matches(llvm::Value* root) = 0;
@@ -228,16 +251,7 @@ struct SUB64ri : public Pattern {
         if (auto* root = dyn_cast<llvm::Instruction>(rootVal)) {
             if (root->getOpcode() == llvm::Instruction::Sub) {
                 // exactly one of them is const
-                if (!(notConst(root->getOperand(0)) != notConst(root->getOperand(1)))) {
-                    return false;
-                }
-                llvm::Value* immediate = root->getOperand(0);
-                if (notConst(immediate)) {
-                    immediate = root->getOperand(1);
-                }
-                auto* intVal = cast<llvm::ConstantInt>(immediate);
-                auto rawVal = intVal->getSExtValue();
-                return rawVal >= INT32_MIN && rawVal <= INT32_MAX;
+                return isConstAndFits(root->getOperand(1));
             }
         }
         return false;
@@ -252,11 +266,8 @@ struct SUB64ri : public Pattern {
     }
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
         auto* root = cast<llvm::Instruction>(rootVal);
-        llvm::Value* immediate = root->getOperand(0);
-        llvm::Value* registerVal = root->getOperand(1);
-        if (notConst(immediate)) {
-            std::swap(immediate, registerVal);
-        }
+        llvm::Value* immediate = root->getOperand(1);
+        llvm::Value* registerVal = root->getOperand(0);
         auto* call = llvm::IRBuilder<>{root}.CreateCall(getInstruction(module, "SUB64ri",
                                                                        llvm::Type::getInt64Ty(module.getContext()),
                                                                        {
@@ -268,16 +279,14 @@ struct SUB64ri : public Pattern {
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
-    std::uint16_t getSize() override { return 2; } // + and one constant
+    std::uint16_t getSize() override { return 2; }
 };
 
 struct XOR64rr : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
             if (rootInst->getOpcode() == llvm::Instruction::Xor) {
-                return true; // TODO: is this ok?
-                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else
-                //           use imm
+                return true;
             }
         }
         return false;
@@ -311,9 +320,7 @@ struct XOR64ri : public Pattern {
                 if (notConst(immediate)) {
                     immediate = root->getOperand(1);
                 }
-                auto* intVal = cast<llvm::ConstantInt>(immediate);
-                auto rawVal = intVal->getSExtValue();
-                return rawVal >= INT32_MIN && rawVal <= INT32_MAX;
+                return isConstAndFits(immediate);
             }
         }
         return false;
@@ -341,7 +348,7 @@ struct XOR64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
-                                                        {root->getOperand(0), root->getOperand(1)});
+                                                        {registerVal, immediate});
         correctImmediates[call].insert(immediate);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
@@ -353,9 +360,7 @@ struct Compare64rr : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
             if (rootInst->getOpcode() == llvm::Instruction::ICmp) {
-                return true; // TODO: is this ok?
-                //           return notConst(rootInst->getOperand(0)) && notConst(rootInst->getOperand(1)); // else
-                //           use imm
+                return true;
             }
         }
         return false;
@@ -365,24 +370,7 @@ struct Compare64rr : public Pattern {
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
         auto* root = cast<llvm::Instruction>(rootVal);
         auto* cmpInst = cast<llvm::ICmpInst>(rootVal);
-        int64_t cond_code = 0;
-        switch (cmpInst->getPredicate()) {
-        case llvm::ICmpInst::ICMP_EQ:
-            cond_code = 4;
-            break;
-        case llvm::ICmpInst::ICMP_NE:
-            cond_code = 5;
-            break;
-        case llvm::ICmpInst::ICMP_SLT:
-            cond_code = 12;
-            break;
-        case llvm::ICmpInst::ICMP_SGT:
-            cond_code = 15;
-            break;
-        default:
-            cmpInst->print(llvm::errs());
-            throw std::runtime_error("unknown icmp");
-        }
+        int64_t cond_code = getCondCode(cmpInst);
 
         llvm::IRBuilder<> builder{root};
         // cmp
@@ -395,6 +383,55 @@ struct Compare64rr : public Pattern {
                                                       }),
                                        {root->getOperand(0), root->getOperand(1)});
 
+        auto* setcc =
+            builder.CreateCall(getInstruction(module, "SETcc8r", llvm::Type::getInt64Ty(module.getContext()),
+                                              {
+                                                  llvm::Type::getInt64Ty(module.getContext()),
+                                              }),
+                               {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), cond_code)});
+        correctImmediates[setcc].insert(setcc->getOperand(0));
+        auto* andInst =
+            builder.CreateCall(getInstruction(module, "AND64ri", llvm::Type::getInt64Ty(module.getContext()),
+                                              {
+                                                  llvm::Type::getInt64Ty(module.getContext()),
+                                                  llvm::Type::getInt64Ty(module.getContext()),
+                                              }),
+                               {setcc, llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 1)});
+        correctImmediates[andInst].insert(andInst->getOperand(1));
+        root->replaceAllUsesWith(andInst);
+        root->eraseFromParent();
+    }
+    std::uint16_t getSize() override { return 1; }
+};
+
+struct Compare64ri : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
+            if (rootInst->getOpcode() == llvm::Instruction::ICmp) {
+                return isConstAndFits(
+                    rootInst->getOperand(1)); // one could also try to handle left one being constant but
+                                              // that would involve flipping the comparison operator
+            }
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        auto* root = cast<llvm::Instruction>(rootVal);
+        auto* cmpInst = cast<llvm::ICmpInst>(rootVal);
+        int64_t cond_code = getCondCode(cmpInst);
+        llvm::IRBuilder<> builder{root};
+        // cmp
+        // setcc
+        // andi 1
+        auto* cmp = builder.CreateCall(getInstruction(module, "CMP64ri", llvm::Type::getVoidTy(module.getContext()),
+                                                      {
+                                                          llvm::Type::getInt64Ty(module.getContext()),
+                                                          llvm::Type::getInt64Ty(module.getContext()),
+                                                      }),
+                                       {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[cmp].insert(root->getOperand(1));
         auto* setcc =
             builder.CreateCall(getInstruction(module, "SETcc8r", llvm::Type::getInt64Ty(module.getContext()),
                                               {
@@ -605,6 +642,46 @@ struct Br : public Pattern {
         }
     }
     std::uint16_t getSize() override { return 1; }
+};
+
+struct BrAndCompRR : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::BranchInst>(root)) {
+            if (!rootInst->isConditional())
+                return false;
+            return nullptr != dyn_cast<llvm::CmpInst>(rootInst->getCondition());
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override {
+        covered.insert(root);
+        covered.insert(dyn_cast<llvm::BranchInst>(root)->getCondition());
+    }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        auto* br = cast<llvm::BranchInst>(rootVal);
+        llvm::IRBuilder<> builder{br};
+        auto* originalCmp = cast<llvm::CmpInst>(br->getCondition());
+
+        auto* cmp = builder.CreateCall(getInstruction(module, "CMP64rr", llvm::Type::getVoidTy(module.getContext()),
+                                                      {
+                                                          llvm::Type::getInt64Ty(module.getContext()),
+                                                          llvm::Type::getInt64Ty(module.getContext()),
+                                                      }),
+                                       {originalCmp->getOperand(0), originalCmp->getOperand(1)});
+
+        auto* jcc = builder.CreateCall(
+            getInstruction(module, "Jcc", llvm::Type::getInt1Ty(module.getContext()),
+                           {
+                               llvm::Type::getInt64Ty(module.getContext()),
+
+                           }),
+            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), getCondCode(originalCmp))});
+        br->setCondition(jcc);
+            originalCmp->eraseFromParent();
+        correctImmediates[jcc].insert(jcc->getOperand(0));
+    }
+    std::uint16_t getSize() override { return 2; }
 };
 
 struct Loadrm : public Pattern {
@@ -881,6 +958,7 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<XOR64rr>());
     patterns.push_back(std::make_unique<XOR64ri>());
     patterns.push_back(std::make_unique<Compare64rr>());
+    patterns.push_back(std::make_unique<Compare64ri>());
     patterns.push_back(std::make_unique<Zext>());
     patterns.push_back(std::make_unique<Loadrm>());
     patterns.push_back(std::make_unique<Storemr>());
@@ -893,6 +971,7 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<IntToPTrDummy>());
     patterns.push_back(std::make_unique<Sext>());
     patterns.push_back(std::make_unique<PhiDummy>());
+    patterns.push_back(std::make_unique<BrAndCompRR>());
     patterns.push_back(std::make_unique<CallDummy>());
 
     std::sort(patterns.begin(), patterns.end(),
