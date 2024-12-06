@@ -678,10 +678,51 @@ struct BrAndCompRR : public Pattern {
                            }),
             {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), getCondCode(originalCmp))});
         br->setCondition(jcc);
-            originalCmp->eraseFromParent();
+        originalCmp->eraseFromParent();
         correctImmediates[jcc].insert(jcc->getOperand(0));
     }
     std::uint16_t getSize() override { return 2; }
+};
+
+struct BrAndCompRI : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::BranchInst>(root)) {
+            if (!rootInst->isConditional())
+                return false;
+            return nullptr != dyn_cast<llvm::CmpInst>(rootInst->getCondition()) &&
+                   isConstAndFits(dyn_cast<llvm::CmpInst>(rootInst->getCondition())->getOperand(1));
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override {
+        covered.insert(root);
+        covered.insert(dyn_cast<llvm::BranchInst>(root)->getCondition());
+    }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        auto* br = cast<llvm::BranchInst>(rootVal);
+        llvm::IRBuilder<> builder{br};
+        auto* originalCmp = cast<llvm::CmpInst>(br->getCondition());
+
+        auto* cmp = builder.CreateCall(getInstruction(module, "CMP64ri", llvm::Type::getVoidTy(module.getContext()),
+                                                      {
+                                                          llvm::Type::getInt64Ty(module.getContext()),
+                                                          llvm::Type::getInt64Ty(module.getContext()),
+                                                      }),
+                                       {originalCmp->getOperand(0), originalCmp->getOperand(1)});
+        correctImmediates[cmp].insert(cmp->getOperand(1));
+        auto* jcc = builder.CreateCall(
+            getInstruction(module, "Jcc", llvm::Type::getInt1Ty(module.getContext()),
+                           {
+                               llvm::Type::getInt64Ty(module.getContext()),
+
+                           }),
+            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), getCondCode(originalCmp))});
+        br->setCondition(jcc);
+        originalCmp->eraseFromParent();
+        correctImmediates[jcc].insert(jcc->getOperand(0));
+    }
+    std::uint16_t getSize() override { return 3; }
 };
 
 struct Loadrm : public Pattern {
@@ -829,7 +870,7 @@ struct Storemi : public Pattern {
         }
         auto* immVal = immedateStore[root];
         std::uint64_t bytes = getBytesFromIntType(immVal->getType());
-        root->getOperand(0)->print(llvm::errs());
+        //   root->getOperand(0)->print(llvm::errs());
         assert(dyn_cast<llvm::ConstantInt>(immVal));
         std::int64_t val = cast<llvm::ConstantInt>(immVal)->getSExtValue();
         auto [min, max] = getMinMaxValWithByteRange(bytes);
@@ -973,6 +1014,7 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<PhiDummy>());
     patterns.push_back(std::make_unique<BrAndCompRR>());
     patterns.push_back(std::make_unique<CallDummy>());
+    patterns.push_back(std::make_unique<BrAndCompRI>());
 
     std::sort(patterns.begin(), patterns.end(),
               [](const std::unique_ptr<Pattern>& p1, const std::unique_ptr<Pattern>& p2) {
@@ -1025,6 +1067,9 @@ void selectInstruction(llvm::Instruction& instr, Context& context, std::unordere
     if (dyn_cast<llvm::AllocaInst>(&instr))
         return;
     for (auto& operand : instr.operands()) {
+        //  llvm::errs() << "looking at operand ";
+        // operand->print(llvm::errs());
+        // llvm::errs() << "\n";
         selectValue(operand, context, &instr, localCovered);
     }
 }
@@ -1065,11 +1110,11 @@ void fixupConstants(llvm::Function& func) {
                                                     true)});
                         constants[constInt->getSExtValue()] = call;
                     }
-                    llvm::errs() << "replacing constant int op  " << i << " :";
-                    constInt->print(llvm::errs());
-                    llvm::errs() << " in instr ";
-                    instr.print(llvm::errs());
-                    llvm::errs() << "\n";
+                    //llvm::errs() << "replacing constant int op  " << i << " :";
+                    //constInt->print(llvm::errs());
+                    //llvm::errs() << " in instr ";
+                    //instr.print(llvm::errs());
+                    //llvm::errs() << "\n";
                     instr.setOperand(i, constants[constInt->getSExtValue()]);
                 }
             }
@@ -1095,17 +1140,17 @@ std::vector<llvm::Instruction*> extractRoots(llvm::Function& func) {
 void selectFunction(llvm::Function& func) {
     Context context;
     auto roots = extractRoots(func);
-    llvm::errs() << "selecting func " << func.getName() << "\n";
+    // llvm::errs() << "selecting func " << func.getName() << "\n";
     for (auto& root : roots) {
-        llvm::errs() << "starting selecting ...\n";
+        //  llvm::errs() << "starting selecting ...\n";
         std::unordered_set<llvm::Value*> localCovered;
         selectInstruction(*root, context, localCovered);
     }
 
     for (auto& [val, pattern, parent] : std::views::reverse(context.selectionMap)) {
-        llvm::errs() << "replacing ...";
-        val->print(llvm::errs());
-        llvm::errs() << " \n";
+        // llvm::errs() << "replacing ...";
+        // val->print(llvm::errs());
+        // llvm::errs() << " \n";
         pattern->replace(*func.getParent(), val, parent);
     }
     fixupConstants(func);
@@ -1227,6 +1272,6 @@ void doInstructionSelection(llvm::Module& module) {
     if (llvm::verifyModule(module, &llvm::errs())) {
         // module.print(llvm::errs(), nullptr);
 
-        // throw std::runtime_error("Invalid IR!");
+        throw std::runtime_error("Invalid IR!");
     }
 }
