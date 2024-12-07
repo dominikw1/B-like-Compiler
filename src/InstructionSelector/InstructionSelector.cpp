@@ -82,7 +82,6 @@ static constexpr llvm::Function* getInstruction(llvm::Module& module, llvm::Stri
     return calledFunc;
 }
 
-
 struct SHL64rr : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
@@ -162,7 +161,6 @@ struct SHL64ri : public Pattern {
     }
     std::uint16_t getSize() override { return 2; }
 };
-
 
 struct SAR64rr : public Pattern {
     bool matches(llvm::Value* root) override {
@@ -244,7 +242,6 @@ struct SAR64ri : public Pattern {
     std::uint16_t getSize() override { return 2; }
 };
 
-
 struct ADD64rr : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
@@ -272,6 +269,78 @@ struct ADD64rr : public Pattern {
     std::uint16_t getSize() override { return 1; } // just the plus
 };
 
+struct LEA_instead_of_add_mul : public Pattern {
+    static bool isFittingConstVal(llvm::Value* v) {
+        auto* constVal = dyn_cast<llvm::ConstantInt>(v);
+        if (!constVal)
+            return false;
+        return constVal->getSExtValue() == 1 || constVal->getSExtValue() == 2 || constVal->getSExtValue() == 4 ||
+               constVal->getSExtValue() == 8;
+    }
+
+    static bool isFittingMul(llvm::Value* v) {
+        auto* mulInst = dyn_cast<llvm::Instruction>(v);
+        if (mulInst && mulInst->getOpcode() == llvm::Instruction::Mul) {
+            return isFittingConstVal(mulInst->getOperand(0)) || isFittingConstVal(mulInst->getOperand(1));
+        }
+        return false;
+    }
+
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
+            if (rootInst->getOpcode() == llvm::Instruction::Add) {
+                return (rootInst->getOperand(0) != rootInst->getOperand(1)) &&
+                       (isFittingMul(rootInst->getOperand(0)) || isFittingMul(rootInst->getOperand(1)));
+            }
+        }
+        return false;
+    }
+
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override {
+        covered.insert(root);
+        auto* addInst = cast<llvm::Instruction>(root);
+        llvm::Instruction* mulInst = nullptr;
+        if (isFittingMul(addInst->getOperand(0))) {
+            mulInst = cast<llvm::Instruction>(addInst->getOperand(0));
+        } else {
+            mulInst = cast<llvm::Instruction>(addInst->getOperand(1));
+        }
+        covered.insert(mulInst);
+        covered.insert(isFittingConstVal(mulInst->getOperand(0)) ? mulInst->getOperand(0) : mulInst->getOperand(1));
+    }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
+        auto* root = cast<llvm::Instruction>(rootVal);
+
+        auto* mulSide =
+            cast<llvm::Instruction>(isFittingMul(root->getOperand(0)) ? root->getOperand(0) : root->getOperand(1));
+        auto* nonMulSide = (root->getOperand(0) == mulSide) ? root->getOperand(1) : root->getOperand(0);
+        assert(mulSide != nonMulSide);
+        assert(mulSide->getOpcode() == llvm::Instruction::Mul);
+
+        auto* immediate = llvm::cast<llvm::ConstantInt>(
+            isFittingConstVal(mulSide->getOperand(0)) ? mulSide->getOperand(0) : mulSide->getOperand(1));
+        auto* mulNonIMmediate = (mulSide->getOperand(0) == immediate) ? mulSide->getOperand(1) : mulSide->getOperand(0);
+        assert(immediate != mulNonIMmediate);
+
+        auto* lea = llvm::IRBuilder<>{root}.CreateCall(
+            getInstruction(module, "LEA64rm", llvm::Type::getInt64Ty(module.getContext()),
+                           {
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                               llvm::Type::getInt64Ty(module.getContext()),
+                           }),
+            {nonMulSide, immediate, mulNonIMmediate,
+             llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
+        
+        root->replaceAllUsesWith(lea);
+        root->eraseFromParent();
+        mulSide->eraseFromParent();
+    }
+    std::uint16_t getSize() override { return 3; } // a + (b*c)
+};
 
 struct ADD64ri : public Pattern {
     bool matches(llvm::Value* rootVal) override {
@@ -1403,6 +1472,7 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<SHL64ri>());
     patterns.push_back(std::make_unique<SAR64rr>());
     patterns.push_back(std::make_unique<SAR64ri>());
+    patterns.push_back(std::make_unique<LEA_instead_of_add_mul>());
 
     std::sort(patterns.begin(), patterns.end(),
               [](const std::unique_ptr<Pattern>& p1, const std::unique_ptr<Pattern>& p2) {
