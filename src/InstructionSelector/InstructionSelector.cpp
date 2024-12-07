@@ -82,6 +82,87 @@ static constexpr llvm::Function* getInstruction(llvm::Module& module, llvm::Stri
     return calledFunc;
 }
 
+
+struct SHL64rr : public Pattern {
+    bool matches(llvm::Value* root) override {
+        if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
+            if (rootInst->getOpcode() == llvm::Instruction::Shl) {
+                return true;
+            }
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* root, std::unordered_set<llvm::Value*>& covered) override { covered.insert(root); }
+
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
+        auto* root = cast<llvm::Instruction>(rootVal);
+        auto* call = llvm::IRBuilder<>{root}.CreateCall(getInstruction(module, "SHL64rr",
+                                                                       llvm::Type::getInt64Ty(module.getContext()),
+                                                                       {
+                                                                           llvm::Type::getInt64Ty(module.getContext()),
+                                                                           llvm::Type::getInt64Ty(module.getContext()),
+                                                                       }),
+                                                        {root->getOperand(0), root->getOperand(1)});
+        root->replaceAllUsesWith(call);
+        root->eraseFromParent();
+    }
+    std::uint16_t getSize() override { return 1; }
+};
+
+struct SHL64ri : public Pattern {
+    bool matches(llvm::Value* rootVal) override {
+        if (auto* root = dyn_cast<llvm::Instruction>(rootVal)) {
+            if (root->getOpcode() == llvm::Instruction::Shl) {
+                // exactly one of them is const
+                if (!(notConst(root->getOperand(0)) != notConst(root->getOperand(1)))) {
+                    return false;
+                }
+                llvm::Value* immediate = root->getOperand(0);
+                if (notConst(immediate)) {
+                    immediate = root->getOperand(1);
+                }
+                assert(dyn_cast<llvm::ConstantInt>(immediate));
+                auto* intVal = cast<llvm::ConstantInt>(immediate);
+                auto rawVal = intVal->getSExtValue();
+                return rawVal >= INT32_MIN && rawVal <= INT32_MAX;
+            }
+        }
+        return false;
+    }
+    void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
+        auto* root = cast<llvm::Instruction>(rootVal);
+        covered.insert(root);
+        if (isConst(root->getOperand(0))) {
+            correctImmediates[rootVal].insert(root->getOperand(0));
+            covered.insert(root->getOperand(0));
+        } else {
+            correctImmediates[rootVal].insert(root->getOperand(1));
+            covered.insert(root->getOperand(1));
+        }
+    }
+    void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
+        assert(dyn_cast<llvm::Instruction>(rootVal));
+        auto* root = cast<llvm::Instruction>(rootVal);
+        llvm::Value* immediate = root->getOperand(0);
+        llvm::Value* registerVal = root->getOperand(1);
+        if (notConst(immediate)) {
+            std::swap(immediate, registerVal);
+        }
+        auto* call = llvm::IRBuilder<>{root}.CreateCall(getInstruction(module, "SHL64ri",
+                                                                       llvm::Type::getInt64Ty(module.getContext()),
+                                                                       {
+                                                                           llvm::Type::getInt64Ty(module.getContext()),
+                                                                           llvm::Type::getInt64Ty(module.getContext()),
+                                                                       }),
+                                                        {root->getOperand(0), root->getOperand(1)});
+        root->replaceAllUsesWith(call);
+        root->eraseFromParent();
+    }
+    std::uint16_t getSize() override { return 2; }
+};
+
 struct ADD64rr : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
@@ -318,7 +399,6 @@ struct And64ri : public Pattern {
     std::uint16_t getSize() override { return 2; }
 };
 
-
 struct Or64rr : public Pattern {
     bool matches(llvm::Value* root) override {
         if (auto* rootInst = dyn_cast<llvm::Instruction>(root)) {
@@ -397,33 +477,13 @@ struct Or64ri : public Pattern {
     std::uint16_t getSize() override { return 2; }
 };
 
-
-
 struct MOV64ri : public Pattern {
     bool matches(llvm::Value* rootVal) override { return isConst(rootVal) && rootVal->getType()->isIntegerTy(); }
     void markCovered(llvm::Value* rootVal, std::unordered_set<llvm::Value*>& covered) override {
         covered.insert(rootVal);
     }
     void replace(llvm::Module& module, llvm::Value* rootVal, llvm::Value* parent) override {
-        /*assert(parent);
-        assert(dyn_cast<llvm::Instruction>(parent));
-        auto* parentInst = cast<llvm::Instruction>(parent);
-        rootVal->mutateType(llvm::Type::getInt64Ty(module.getContext()));
-        llvm::IRBuilder<> builder{module.getContext()};
-        builder.SetInsertPoint(parentInst->getFunction()->getEntryBlock().getFirstInsertionPt());
-        auto* call = builder.CreateCall(getInstruction(module, "MOV64ri",
-        llvm::Type::getInt64Ty(module.getContext()),
-                                                       {
-                                                           llvm::Type::getInt64Ty(module.getContext()),
-                                                       }),
-                                        {rootVal});
-        correctImmediates[call].insert(rootVal);
-        for (size_t i = 0; i < parentInst->getNumOperands(); ++i) {
-            if (parentInst->getOperand(i) == rootVal) {
-                parentInst->setOperand(i, call);
-                break;
-            }
-        }*/
+        // done later at fixup time
     }
     std::uint16_t getSize() override { return 1; } // one constant
 };
@@ -1256,6 +1316,8 @@ std::vector<std::unique_ptr<Pattern>> fillPatterns() noexcept {
     patterns.push_back(std::make_unique<Or64rr>());
     patterns.push_back(std::make_unique<And64ri>());
     patterns.push_back(std::make_unique<Or64ri>());
+    patterns.push_back(std::make_unique<SHL64rr>());
+    patterns.push_back(std::make_unique<SHL64ri>());
 
     std::sort(patterns.begin(), patterns.end(),
               [](const std::unique_ptr<Pattern>& p1, const std::unique_ptr<Pattern>& p2) {
