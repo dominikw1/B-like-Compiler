@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
         if (std::string_view{argv[1]}.starts_with("-i")) {
             IR.module->print(llvm::outs(), nullptr);
         }
-        
+
         return EXIT_SUCCESS;
     } catch (std::exception& e) {
         std::cerr << e.what() << "\n";
