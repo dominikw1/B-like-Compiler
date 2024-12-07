@@ -11,7 +11,7 @@
 
 int main(int argc, char** argv) {
     if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " {-c/-a/-l} <input>";
+        std::cerr << "Usage: " << argv[0] << " {-c/-a/-l/-i} <input>";
         return EXIT_FAILURE;
     }
     try {

@@ -1189,6 +1189,9 @@ void selectFunction(llvm::Function& func) {
 
     // replace all stack arguments with framepointer offset
     for (size_t i = 6; i < numArgs; ++i) {
+        if(func.getArg(i)->getNumUses() == 1) { // only the frame-setup func
+            continue;
+        }
         auto loadedVal =
             builder.CreateCall(getInstruction(*func.getParent(), "MOV64rm", llvm::Type::getInt64Ty(func.getContext()),
                                               {
