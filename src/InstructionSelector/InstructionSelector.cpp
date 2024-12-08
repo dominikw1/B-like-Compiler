@@ -134,10 +134,8 @@ struct SHL64ri : public Pattern {
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
         if (isConst(root->getOperand(0))) {
-            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
         } else {
-            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
         }
     }
@@ -156,6 +154,7 @@ struct SHL64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(call->getOperand(1));
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -214,10 +213,8 @@ struct SAR64ri : public Pattern {
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
         if (isConst(root->getOperand(0))) {
-            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
         } else {
-            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
         }
     }
@@ -236,6 +233,7 @@ struct SAR64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(root->getOperand(1));
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -334,7 +332,7 @@ struct LEA_instead_of_add_mul : public Pattern {
                            }),
             {nonMulSide, immediate, mulNonIMmediate,
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
-        
+
         root->replaceAllUsesWith(lea);
         root->eraseFromParent();
         mulSide->eraseFromParent();
@@ -367,10 +365,8 @@ struct ADD64ri : public Pattern {
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
         if (isConst(root->getOperand(0))) {
-            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
         } else {
-            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
         }
     }
@@ -389,6 +385,7 @@ struct ADD64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(call->getOperand(1));
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -445,10 +442,8 @@ struct MUL64ri : public Pattern {
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
         if (isConst(root->getOperand(0))) {
-            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
         } else {
-            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
         }
     }
@@ -467,6 +462,8 @@ struct MUL64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(call->getOperand(1));
+
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -523,10 +520,8 @@ struct And64ri : public Pattern {
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
         if (isConst(root->getOperand(0))) {
-            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
         } else {
-            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
         }
     }
@@ -545,6 +540,7 @@ struct And64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(call->getOperand(1));
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -601,10 +597,8 @@ struct Or64ri : public Pattern {
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
         if (isConst(root->getOperand(0))) {
-            correctImmediates[rootVal].insert(root->getOperand(0));
             covered.insert(root->getOperand(0));
         } else {
-            correctImmediates[rootVal].insert(root->getOperand(1));
             covered.insert(root->getOperand(1));
         }
     }
@@ -623,6 +617,8 @@ struct Or64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
+        correctImmediates[call].insert(call->getOperand(1));
+
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -1724,6 +1720,7 @@ void cleanUp(llvm::Function& func) {
 } // namespace
 
 void doInstructionSelection(llvm::Module& module) {
+    correctImmediates.clear();
     for (auto& func : module) {
         if (!func.isDeclaration()) {
             selectFunction(func);

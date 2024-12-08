@@ -172,7 +172,7 @@ constexpr std::optional<Token> lexNextToken(auto& curr, auto end) {
         return *i;
     }
 
-    throw std::runtime_error("Error lexing");
+    throw std::runtime_error(std::format("Error lexing {}", std::string_view{curr, end}));
 }
 
 } // namespace
