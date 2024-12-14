@@ -52,8 +52,7 @@ class RegisterAllocator {
     void loadFromStack(std::uint8_t dest, llvm::Value* val, llvm::Module& module) {
         builder.CreateCall(
             getInstruction(module, "R_MOV64rm", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
-            {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackSlot[val] * 8)},
-            "load");
+            {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackSlot[val] * 8)});
     }
 
     void spillToStack(llvm::Instruction& instr) {
@@ -72,8 +71,7 @@ class RegisterAllocator {
                                                         llvm::Type::getVoidTy(instr.getContext()),
                                                         {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                          {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER),
-                                          getI64(currStackSlot * 8), getI64(DEFAULT_OUTPUT_REGISTER)},
-                                         "spilled");
+                                          getI64(currStackSlot * 8), getI64(DEFAULT_OUTPUT_REGISTER)});
         stackSlot[&instr] = currStackSlot++;
     }
 
@@ -91,8 +89,7 @@ class RegisterAllocator {
                     builder.CreateCall(getInstruction(*func.getParent(), "R_MOV64mr", llvm::Type::getVoidTy(context),
                                                       {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                        {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER),
-                                        getI64(currStackSlot * 8), getI64(register_num)},
-                                       "reg-arg-to-stack");
+                                        getI64(currStackSlot * 8), getI64(register_num)});
                 stackSlot[arg] = currStackSlot++;
             } else {
                 // passed on stack anyway, but let's just copy them to where we can actually use them easily
@@ -138,16 +135,14 @@ class RegisterAllocator {
         builder.SetInsertPoint(newFrameSetup->getNextNode());
         builder.CreateCall(
             getInstruction(*func.getParent(), "R_MOV64ri", llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
-            {getI64(ZERO_REGISTER), getI64(0)},
-            "init-zero-register"); // initialise zero register with 0 - not to be touched
+            {getI64(ZERO_REGISTER), getI64(0)}); // initialise zero register with 0 - not to be touched
                                    // anymore! TODO: only do this if we are in main
         // initialise stack spill start
         auto* spillStart =
             builder.CreateCall(getInstruction(*func.getParent(), "R_LEA64rm", llvm::Type::getVoidTy(context),
                                               {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                {getI64(SPILL_START_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
-                                getI64(ZERO_REGISTER), getI64(0 /*- final stacksize, to be adjusted later*/)},
-                               "init-stack-spill-start");
+                                getI64(ZERO_REGISTER), getI64(0 /*- final stacksize, to be adjusted later*/)});
         return {old_stackSetup, spillStart};
     }
 
@@ -213,7 +208,7 @@ class RegisterAllocator {
                 loadFromStack(RETURN_VALUE_REGISTER, returnInst->getReturnValue(), *func.getParent());
             }
             auto* destroy = builder.CreateCall(
-                getInstruction(*func.getParent(), "R_FRAME_DESTROY", i64Ty, {llvm::Type::getVoidTy(context)}), {});
+                getInstruction(*func.getParent(), "R_FRAME_DESTROY", i64Ty, {}), {});
             returnInst->setOperand(0, destroy);
         }
     }
