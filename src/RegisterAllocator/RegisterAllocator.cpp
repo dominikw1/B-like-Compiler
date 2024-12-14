@@ -3,6 +3,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
+
 static constexpr llvm::Function* getInstruction(llvm::Module& module, llvm::StringRef name, llvm::Type* retType,
                                                 std::vector<llvm::Type*> args, bool varags = false) {
     auto* calledFunc = module.getFunction(name);
@@ -51,7 +52,8 @@ class RegisterAllocator {
     void loadFromStack(std::uint8_t dest, llvm::Value* val, llvm::Module& module) {
         builder.CreateCall(
             getInstruction(module, "R_MOV64rm", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
-            {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackSlot[val] * 8)},"load");
+            {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackSlot[val] * 8)},
+            "load");
     }
 
     void spillToStack(llvm::Instruction& instr) {
@@ -70,7 +72,8 @@ class RegisterAllocator {
                                                         llvm::Type::getVoidTy(instr.getContext()),
                                                         {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                          {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER),
-                                          getI64(currStackSlot * 8), getI64(DEFAULT_OUTPUT_REGISTER)},"spilled");
+                                          getI64(currStackSlot * 8), getI64(DEFAULT_OUTPUT_REGISTER)},
+                                         "spilled");
         stackSlot[&instr] = currStackSlot++;
     }
 
@@ -106,7 +109,7 @@ class RegisterAllocator {
         }
     }
 
-    void allocaStackForEveryInst(llvm::Function& func) {
+    llvm::Value* initState(llvm::Function& func) {
         auto* old_stackSetup = cast<llvm::CallInst>(func.getEntryBlock().getFirstNonPHI());
         std::uint64_t currOffset =
             cast<llvm::ConstantInt>(old_stackSetup->getArgOperand(1))->getZExtValue(); // stackFrameSize
@@ -140,8 +143,10 @@ class RegisterAllocator {
                                {getI64(SPILL_START_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
                                 getI64(ZERO_REGISTER), getI64(0 /*- final stacksize, to be adjusted later*/)},
                                "init-stack-spill-start");
+        return old_stackSetup;
+    }
 
-        spillArgsToStack(func);
+    auto allocaStackForEveryInst(llvm::Function& func) {
         llvm::SmallVector<llvm::CallInst*> frameDestroys;
         for (auto& bb : llvm::make_early_inc_range(func)) {
             for (auto& inst : llvm::make_early_inc_range(bb)) {
@@ -157,7 +162,10 @@ class RegisterAllocator {
                 spillToStack(inst);
             }
         }
+        return frameDestroys;
+    }
 
+    void loadSpilledOperands(llvm::Function& func) {
         // handle operands loaded from stack
         for (auto& bb : llvm::make_early_inc_range(func)) {
             for (auto& inst : llvm::make_early_inc_range(bb)) {
@@ -183,7 +191,9 @@ class RegisterAllocator {
                 }
             }
         }
+    }
 
+    void handleReturns(llvm::Function& func, llvm::SmallVector<llvm::CallInst*>& frameDestroys) {
         // handle returns
         for (auto* frame_destroy : frameDestroys) {
             auto* returnInst = cast<llvm::ReturnInst>(frame_destroy->getNextNode());
@@ -203,11 +213,17 @@ class RegisterAllocator {
         }
 
         // TODO: update stack size
-        old_stackSetup->deleteValue(); // cleanup only afterwards - we still need the references to it before
     }
 
   public:
-    void allocateFunction(llvm::Function& func) { allocaStackForEveryInst(func); }
+    void allocateFunction(llvm::Function& func) {
+        auto* oldStackSetup = initState(func);
+        spillArgsToStack(func);
+        auto frameDestroys = allocaStackForEveryInst(func);
+        loadSpilledOperands(func);
+        handleReturns(func, frameDestroys);
+        oldStackSetup->deleteValue(); // cleanup only afterwards - we still need the references to it before
+    }
 };
 
 void allocateRegisters(llvm::Module& module) {
