@@ -109,7 +109,12 @@ class RegisterAllocator {
         }
     }
 
-    llvm::Value* initState(llvm::Function& func) {
+    struct FrameState {
+        llvm::CallInst* oldSetupCall;
+        llvm::CallInst* spillInit;
+    };
+
+    FrameState initState(llvm::Function& func) {
         auto* old_stackSetup = cast<llvm::CallInst>(func.getEntryBlock().getFirstNonPHI());
         std::uint64_t currOffset =
             cast<llvm::ConstantInt>(old_stackSetup->getArgOperand(1))->getZExtValue(); // stackFrameSize
@@ -143,7 +148,7 @@ class RegisterAllocator {
                                {getI64(SPILL_START_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
                                 getI64(ZERO_REGISTER), getI64(0 /*- final stacksize, to be adjusted later*/)},
                                "init-stack-spill-start");
-        return old_stackSetup;
+        return {old_stackSetup, spillStart};
     }
 
     auto allocaStackForEveryInst(llvm::Function& func) {
@@ -211,18 +216,102 @@ class RegisterAllocator {
                 getInstruction(*func.getParent(), "R_FRAME_DESTROY", i64Ty, {llvm::Type::getVoidTy(context)}), {});
             returnInst->setOperand(0, destroy);
         }
+    }
 
-        // TODO: update stack size
+    void updateStackSize(llvm::Function& func, llvm::CallInst* spillInit) {
+        std::uint64_t slots = stackSlot.size();
+        auto* stack_alloc = cast<llvm::CallInst>(func.getEntryBlock().getFirstInsertionPt());
+        std::uint64_t currVal = dyn_cast<llvm::ConstantInt>(stack_alloc->getOperand(0))->getZExtValue();
+        stack_alloc->setOperand(0, getI64(slots * 8 + currVal));
+        spillInit->setOperand(4, getI64(-(slots * 8 + currVal)));
+    }
+
+    constexpr static std::array<std::string_view, 22> destShiftInstructions_PreReg{
+        "MOV64rr",    "MOV64ri",    "MOV32rr",    "MOV32ri",    "MOV64rm",    "MOV32rm",    "MOVZXB32rr", "MOVZXB32rm",
+        "MOVZXW32rr", "MOVZXW32rm", "MOVSXB32rr", "MOVSXB32rm", "MOVSXB64rr", "MOVSXB64rm", "MOVSXW32rr", "MOVSXW32rm",
+        "MOVSXW64rr", "MOVSXW64rm", "MOVSXWD4rr", "MOVSXWD4rm", "LEA64rm",    "IMUL64rri"};
+
+    constexpr static std::array<std::string_view, 22> destShiftInstructions{
+        "R_MOV64rr",    "R_MOV64ri",    "R_MOV32rr",    "R_MOV32ri",    "R_MOV64rm",    "R_MOV32rm",
+        "R_MOVZXB32rr", "R_MOVZXB32rm", "R_MOVZXW32rr", "R_MOVZXW32rm", "R_MOVSXB32rr", "R_MOVSXB32rm",
+        "R_MOVSXB64rr", "R_MOVSXB64rm", "R_MOVSXW32rr", "R_MOVSXW32rm", "R_MOVSXW64rr", "R_MOVSXW64rm",
+        "R_MOVSXWD4rr", "R_MOVSXWD4rm", "R_LEA64rm",    "R_IMUL64rri"};
+
+    constexpr static std::array<std::string_view, 21> firstOpDestInstructions_PreReg{
+        "SUB64rr", "SUB64ri", "ADD64rr", "ADD64ri", "IMUL64rr", "AND64rr", "AND64ri", "OR64rr", "OR64ri",
+        "XOR64rr", "XOR64ri", "SHL64rr", "SHL64ri", "SHR64rr",  "SHR64ri", "SAR64rr", "SAR64ri"};
+
+    constexpr static std::array<std::string_view, 21> firstOpDestInstructions{
+        "R_SUB64rr", "R_SUB64ri", "R_ADD64rr", "R_ADD64ri", "R_IMUL64rr", "R_AND64rr",
+        "R_AND64ri", "R_OR64rr",  "R_OR64ri",  "R_XOR64rr", "R_XOR64ri",  "R_SHL64rr",
+        "R_SHL64ri", "R_SHR64rr", "R_SHR64ri", "R_SAR64rr", "R_SAR64ri"};
+
+    void transformInstructions(llvm::Function& func) {
+        for (auto& bb : func) {
+            for (auto& instr : bb) {
+                if (auto* call = dyn_cast<llvm::CallInst>(&instr)) {
+                    if (call->getCalledFunction()->getName().starts_with("R_")) {
+                        continue;
+                    }
+                    if (!call->getCalledFunction()->getFunctionType()->getReturnType()->isVoidTy()) {
+                        // not just simple rename
+                        if (auto it = std::find(destShiftInstructions.begin(), destShiftInstructions.end(),
+                                                std::string_view{call->getCalledFunction()->getName()});
+                            it != destShiftInstructions.end()) {
+                            llvm::SmallVector<llvm::Value*> args;
+                            args.push_back(getI64(DEFAULT_OUTPUT_REGISTER));
+                            for (auto& old_arg : call->args()) {
+                                args.push_back(old_arg);
+                            }
+
+                            auto* calledFunc = getInstruction(
+                                *func.getParent(), destShiftInstructions[it - destShiftInstructions_PreReg.begin()],
+                                llvm::Type::getVoidTy(context), std::vector<llvm::Type*>(call->arg_size() + 1, i64Ty));
+                            builder.SetInsertPoint(call);
+                            builder.CreateCall(calledFunc, args);
+                        } else if (auto it = std::find(firstOpDestInstructions_PreReg.begin(),
+                                                       firstOpDestInstructions_PreReg.end(),
+                                                       std::string_view{call->getCalledFunction()->getName()});
+                                   it != firstOpDestInstructions_PreReg.end()) {
+                            // first register is 1 anyway so nothing to do except rename??
+                            llvm::SmallVector<llvm::Value*> args;
+                            for (auto& old_arg : call->args()) {
+                                args.push_back(old_arg);
+                            }
+                            auto* calledFunc = getInstruction(
+                                *func.getParent(), firstOpDestInstructions[it - firstOpDestInstructions_PreReg.begin()],
+                                llvm::Type::getVoidTy(context), std::vector<llvm::Type*>(call->arg_size(), i64Ty));
+                            builder.SetInsertPoint(call);
+                            builder.CreateCall(calledFunc, args);
+                        } else {
+                            throw std::runtime_error("cannot deal with yet");
+                        }
+                    }
+                }
+            }
+        }
+
+        for (auto& bb : func) {
+            for (auto& instr : llvm::make_early_inc_range(bb)) {
+                if (auto* call = dyn_cast<llvm::CallInst>(&instr)) {
+                    if (!call->getCalledFunction()->getName().starts_with("R_")) {
+                        call->eraseFromParent();
+                    }
+                }
+            }
+        }
     }
 
   public:
     void allocateFunction(llvm::Function& func) {
-        auto* oldStackSetup = initState(func);
+        FrameState frameState = initState(func);
         spillArgsToStack(func);
         auto frameDestroys = allocaStackForEveryInst(func);
         loadSpilledOperands(func);
         handleReturns(func, frameDestroys);
-        oldStackSetup->deleteValue(); // cleanup only afterwards - we still need the references to it before
+        transformInstructions(func);
+        updateStackSize(func, frameState.spillInit);
+        frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
     }
 };
 
