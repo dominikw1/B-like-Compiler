@@ -4,6 +4,7 @@
 #include "Parser/AST.h"
 #include "Parser/Parser.h"
 #include "Parser/Scanner.h"
+#include "RegisterAllocator/RegisterAllocator.h"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -40,6 +41,13 @@ int main(int argc, char** argv) {
         doInstructionSelection(*IR.module);
         if (std::string_view{argv[1]}.starts_with("-i")) {
             IR.module->print(llvm::outs(), nullptr);
+            return EXIT_SUCCESS;
+        }
+
+        allocateRegisters(*IR.module);
+        if (std::string_view{argv[1]}.starts_with("-r")) {
+            IR.module->print(llvm::outs(), nullptr);
+            return EXIT_SUCCESS;
         }
 
         return EXIT_SUCCESS;

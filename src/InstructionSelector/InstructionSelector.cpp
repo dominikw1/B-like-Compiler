@@ -1264,7 +1264,7 @@ struct Storemr : public Pattern {
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), root->getOperand(0)});
         correctImmediates[store].insert(store->getOperand(1));
-        correctImmediates[store].insert(store->getOperand(2));
+        //correctImmediates[store].insert(store->getOperand(2));
         correctImmediates[store].insert(store->getOperand(3));
         root->replaceAllUsesWith(store);
         root->eraseFromParent();

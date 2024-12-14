@@ -1,0 +1,2 @@
+add_library(RegisterAllocator RegisterAllocator.cpp)
+target_link_libraries(RegisterAllocator LLVM) 

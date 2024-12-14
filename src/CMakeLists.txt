@@ -1,7 +1,8 @@
 add_subdirectory(Parser)
 add_subdirectory(IRGenerator)
-add_subdirectory(InstructionSelector)
 add_subdirectory(Optimizer)
+add_subdirectory(InstructionSelector)
+add_subdirectory(RegisterAllocator)
 
 add_executable(
     Compiler
@@ -14,4 +15,5 @@ target_link_libraries(
     IRGenerator
     Optimizer
     InstructionSelector
+    RegisterAllocator
 )
