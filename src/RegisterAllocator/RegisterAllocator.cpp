@@ -163,6 +163,9 @@ class RegisterAllocator {
                         frameDestroys.push_back(call);
                         continue;
                     }
+                    if (call->getCalledFunction()->getReturnType()->isVoidTy()) {
+                        continue;
+                    }
                 }
                 spillToStack(inst);
             }
