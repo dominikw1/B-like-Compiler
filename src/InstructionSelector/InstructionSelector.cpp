@@ -10,8 +10,14 @@
 #include <unordered_set>
 
 namespace {
+struct pairhash {
+  public:
+    template <typename T, typename U> std::size_t operator()(const std::pair<T, U>& x) const {
+        return std::hash<T>()(x.first) ^ std::hash<U>()(x.second);
+    }
+};
 
-std::unordered_map<llvm::Value*, std::unordered_set<llvm::Value*>> correctImmediates;
+std::unordered_map<llvm::Value*, std::unordered_set<std::pair<llvm::Value*, size_t>,pairhash>> correctImmediates;
 
 std::uint64_t getCondCode(llvm::CmpInst* cmpInst) {
     switch (cmpInst->getPredicate()) {
@@ -154,7 +160,7 @@ struct SHL64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(call->getOperand(1));
+        correctImmediates[call].emplace(call->getOperand(1), 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -233,7 +239,7 @@ struct SAR64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(root->getOperand(1));
+        correctImmediates[call].emplace(root->getOperand(1), 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -333,8 +339,8 @@ struct LEA_instead_of_add_mul : public Pattern {
             {nonMulSide, immediate, mulNonIMmediate,
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
 
-        correctImmediates[lea].insert(lea->getOperand(1));
-        correctImmediates[lea].insert(lea->getOperand(3));
+        correctImmediates[lea].emplace(lea->getOperand(1), 1);
+        correctImmediates[lea].emplace(lea->getOperand(3), 3);
         root->replaceAllUsesWith(lea);
         root->eraseFromParent();
         mulSide->eraseFromParent();
@@ -387,7 +393,7 @@ struct ADD64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(call->getOperand(1));
+        correctImmediates[call].emplace(call->getOperand(1), 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -464,7 +470,7 @@ struct MUL64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(call->getOperand(1));
+        correctImmediates[call].emplace(call->getOperand(1), 1);
 
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
@@ -542,7 +548,7 @@ struct And64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(call->getOperand(1));
+        correctImmediates[call].emplace(call->getOperand(1), 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -619,7 +625,7 @@ struct Or64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(call->getOperand(1));
+        correctImmediates[call].emplace(call->getOperand(1), 1);
 
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
@@ -652,7 +658,7 @@ struct MOV32ri : public Pattern {
                                llvm::Type::getInt64Ty(module.getContext()),
                            }),
             {rootVal});
-        correctImmediates[call].insert(rootVal);
+        correctImmediates[call].emplace(rootVal, 0);
         for (size_t i = 0; i < parentInst->getNumOperands(); ++i) {
             if (parentInst->getOperand(i) == rootVal) {
                 parentInst->setOperand(i, call);
@@ -720,7 +726,7 @@ struct SUB64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[call].insert(immediate);
+        correctImmediates[call].emplace(immediate, 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -794,7 +800,7 @@ struct XOR64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
                                                         {registerVal, immediate});
-        correctImmediates[call].insert(immediate);
+        correctImmediates[call].emplace(immediate, 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
     }
@@ -834,7 +840,7 @@ struct Compare64rr : public Pattern {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
                                {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), cond_code)});
-        correctImmediates[setcc].insert(setcc->getOperand(0));
+        correctImmediates[setcc].emplace(setcc->getOperand(0), 0);
         auto* andInst =
             builder.CreateCall(getInstruction(module, "AND64ri", llvm::Type::getInt64Ty(module.getContext()),
                                               {
@@ -842,7 +848,7 @@ struct Compare64rr : public Pattern {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
                                {setcc, llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 1)});
-        correctImmediates[andInst].insert(andInst->getOperand(1));
+        correctImmediates[andInst].emplace(andInst->getOperand(1), 1);
         root->replaceAllUsesWith(andInst);
         root->eraseFromParent();
     }
@@ -876,14 +882,14 @@ struct Compare64ri : public Pattern {
                                                           llvm::Type::getInt64Ty(module.getContext()),
                                                       }),
                                        {root->getOperand(0), root->getOperand(1)});
-        correctImmediates[cmp].insert(root->getOperand(1));
+        correctImmediates[cmp].emplace(root->getOperand(1), 1);
         auto* setcc =
             builder.CreateCall(getInstruction(module, "SETcc8r", llvm::Type::getInt64Ty(module.getContext()),
                                               {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
                                {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), cond_code)});
-        correctImmediates[setcc].insert(setcc->getOperand(0));
+        correctImmediates[setcc].emplace(setcc->getOperand(0), 0);
         auto* andInst =
             builder.CreateCall(getInstruction(module, "AND64ri", llvm::Type::getInt64Ty(module.getContext()),
                                               {
@@ -891,7 +897,7 @@ struct Compare64ri : public Pattern {
                                                   llvm::Type::getInt64Ty(module.getContext()),
                                               }),
                                {setcc, llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 1)});
-        correctImmediates[andInst].insert(andInst->getOperand(1));
+        correctImmediates[andInst].emplace(andInst->getOperand(1), 1);
         root->replaceAllUsesWith(andInst);
         root->eraseFromParent();
     }
@@ -928,7 +934,7 @@ struct Zext : public Pattern { // TODO: replace by  actual zext
                                               }),
                                {root->getOperand(0), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()),
                                                                             (1ull << bitsExtendedFrom[root]) - 1)});
-        correctImmediates[zext].insert(zext->getOperand(1));
+        correctImmediates[zext].emplace(zext->getOperand(1), 1);
         root->replaceAllUsesWith(zext);
         root->eraseFromParent();
     }
@@ -1075,7 +1081,7 @@ struct Br : public Pattern {
                                    llvm::Type::getInt64Ty(module.getContext()),
                                }),
                 {br->getCondition(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
-            correctImmediates[cmp].insert(cmp->getOperand(1));
+            correctImmediates[cmp].emplace(cmp->getOperand(1), 1);
             auto* jcc = builder.CreateCall(getInstruction(module, "Jcc", llvm::Type::getInt1Ty(module.getContext()),
                                                           {
                                                               llvm::Type::getInt64Ty(module.getContext()),
@@ -1083,7 +1089,7 @@ struct Br : public Pattern {
                                                           }),
                                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 5)});
             br->setCondition(jcc);
-            correctImmediates[jcc].insert(jcc->getOperand(0));
+            correctImmediates[jcc].emplace(jcc->getOperand(0), 0);
         }
     }
     std::uint16_t getSize() override { return 1; }
@@ -1124,7 +1130,7 @@ struct BrAndCompRR : public Pattern {
             {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), getCondCode(originalCmp))});
         br->setCondition(jcc);
         originalCmp->eraseFromParent();
-        correctImmediates[jcc].insert(jcc->getOperand(0));
+        correctImmediates[jcc].emplace(jcc->getOperand(0), 0);
     }
     std::uint16_t getSize() override { return 2; }
 };
@@ -1155,7 +1161,7 @@ struct BrAndCompRI : public Pattern {
                                                           llvm::Type::getInt64Ty(module.getContext()),
                                                       }),
                                        {originalCmp->getOperand(0), originalCmp->getOperand(1)});
-        correctImmediates[cmp].insert(cmp->getOperand(1));
+        correctImmediates[cmp].emplace(cmp->getOperand(1), 1);
         auto* jcc = builder.CreateCall(
             getInstruction(module, "Jcc", llvm::Type::getInt1Ty(module.getContext()),
                            {
@@ -1165,7 +1171,7 @@ struct BrAndCompRI : public Pattern {
             {llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), getCondCode(originalCmp))});
         br->setCondition(jcc);
         originalCmp->eraseFromParent();
-        correctImmediates[jcc].insert(jcc->getOperand(0));
+        correctImmediates[jcc].emplace(jcc->getOperand(0), 0);
     }
     std::uint16_t getSize() override { return 3; }
 };
@@ -1208,9 +1214,9 @@ struct Loadrm : public Pattern {
             {root->getPointerOperand(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
-        correctImmediates[load].insert(load->getOperand(1));
-        correctImmediates[load].insert(load->getOperand(2));
-        correctImmediates[load].insert(load->getOperand(3));
+        correctImmediates[load].emplace(load->getOperand(1), 1);
+        //        correctImmediates[load].emplace(load->getOperand(2),2);
+        correctImmediates[load].emplace(load->getOperand(3), 3);
         root->replaceAllUsesWith(load);
         root->eraseFromParent();
     }
@@ -1265,9 +1271,9 @@ struct Storemr : public Pattern {
             {root->getPointerOperand(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), root->getOperand(0)});
-        correctImmediates[store].insert(store->getOperand(1));
+        correctImmediates[store].emplace(store->getOperand(1), 1);
         // correctImmediates[store].insert(store->getOperand(2));
-        correctImmediates[store].insert(store->getOperand(3));
+        correctImmediates[store].emplace(store->getOperand(3), 3);
         root->replaceAllUsesWith(store);
         root->eraseFromParent();
     }
@@ -1339,10 +1345,10 @@ struct Storemi : public Pattern {
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
                                          llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
 
-        correctImmediates[store].insert(store->getOperand(1));
-        correctImmediates[store].insert(store->getOperand(2));
-        correctImmediates[store].insert(store->getOperand(3));
-        correctImmediates[store].insert(store->getOperand(4));
+        correctImmediates[store].emplace(store->getOperand(1), 1);
+        //  correctImmediates[store].insert(store->getOperand(2));
+        correctImmediates[store].emplace(store->getOperand(3), 3);
+        correctImmediates[store].emplace(store->getOperand(4), 4);
 
         root->replaceAllUsesWith(store);
         root->eraseFromParent();
@@ -1381,8 +1387,8 @@ struct GEP : public Pattern {
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), byteStoreMap[root]),
              *root->idx_begin(), llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
 
-        correctImmediates[ptr].insert(ptr->getOperand(1));
-        correctImmediates[ptr].insert(ptr->getOperand(3));
+        correctImmediates[ptr].emplace(ptr->getOperand(1), 1);
+        correctImmediates[ptr].emplace(ptr->getOperand(3), 3);
 
         root->replaceAllUsesWith(ptr);
         root->eraseFromParent();
@@ -1425,9 +1431,9 @@ struct GEPi : public Pattern {
                                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 8),
                                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
 
-        correctImmediates[ptr].insert(ptr->getOperand(1));
+        correctImmediates[ptr].emplace(ptr->getOperand(1), 1);
         // correctImmediates[ptr].insert(ptr->getOperand(2));
-        correctImmediates[ptr].insert(ptr->getOperand(3));
+        correctImmediates[ptr].emplace(ptr->getOperand(3), 3);
         root->replaceAllUsesWith(ptr);
         root->eraseFromParent();
     }
@@ -1551,7 +1557,7 @@ void fixupConstants(llvm::Function& func) {
             for (auto [i, op] : std::views::enumerate(instr.operands())) {
 
                 if (auto* constInt = dyn_cast<llvm::ConstantInt>(op)) {
-                    if (correctImmediates[&instr].contains(op)) {
+                    if (correctImmediates[&instr].contains({op, i})) {
                         continue;
                     }
                     if (!constants.contains(constInt->getSExtValue())) {
@@ -1685,8 +1691,8 @@ void selectFunction(llvm::Function& func) {
                                               }),
                                {framepointer, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 8),
                                 constOffset, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
-        correctImmediates[ptr].insert(ptr->getOperand(1));
-        correctImmediates[ptr].insert(ptr->getOperand(3));
+        correctImmediates[ptr].emplace(ptr->getOperand(1), 1);
+        correctImmediates[ptr].emplace(ptr->getOperand(3), 3);
         alloca->replaceAllUsesWith(ptr);
         alloca->eraseFromParent();
     }
