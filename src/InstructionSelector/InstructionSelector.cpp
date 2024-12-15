@@ -333,6 +333,8 @@ struct LEA_instead_of_add_mul : public Pattern {
             {nonMulSide, immediate, mulNonIMmediate,
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0)});
 
+        correctImmediates[lea].insert(lea->getOperand(1));
+        correctImmediates[lea].insert(lea->getOperand(3));
         root->replaceAllUsesWith(lea);
         root->eraseFromParent();
         mulSide->eraseFromParent();
@@ -893,7 +895,7 @@ struct Compare64ri : public Pattern {
         root->replaceAllUsesWith(andInst);
         root->eraseFromParent();
     }
-    std::uint16_t getSize() override { return 1; }
+    std::uint16_t getSize() override { return 2; }
 };
 
 struct Zext : public Pattern { // TODO: replace by  actual zext
@@ -1264,7 +1266,7 @@ struct Storemr : public Pattern {
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0),
              llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), root->getOperand(0)});
         correctImmediates[store].insert(store->getOperand(1));
-        //correctImmediates[store].insert(store->getOperand(2));
+        // correctImmediates[store].insert(store->getOperand(2));
         correctImmediates[store].insert(store->getOperand(3));
         root->replaceAllUsesWith(store);
         root->eraseFromParent();
@@ -1424,7 +1426,7 @@ struct GEPi : public Pattern {
                                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(module.getContext()), 0), imm});
 
         correctImmediates[ptr].insert(ptr->getOperand(1));
-        correctImmediates[ptr].insert(ptr->getOperand(2));
+        // correctImmediates[ptr].insert(ptr->getOperand(2));
         correctImmediates[ptr].insert(ptr->getOperand(3));
         root->replaceAllUsesWith(ptr);
         root->eraseFromParent();
@@ -1666,7 +1668,14 @@ void selectFunction(llvm::Function& func) {
     for (auto [i, alloca] : std::views::enumerate(allocas)) {
         builder.SetInsertPoint(alloca);
 
-        auto ptr =
+        auto constOffset =
+            builder.CreateCall(getInstruction(*func.getParent(), "MOV64ri", llvm::Type::getInt64Ty(func.getContext()),
+                                              {
+                                                  llvm::Type::getInt64Ty(func.getContext()),
+                                              }),
+                               {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), -i - 1, true)});
+
+        auto* ptr =
             builder.CreateCall(getInstruction(*func.getParent(), "LEA64rm", llvm::Type::getInt64Ty(func.getContext()),
                                               {
                                                   llvm::Type::getInt64Ty(func.getContext()),
@@ -1675,8 +1684,9 @@ void selectFunction(llvm::Function& func) {
                                                   llvm::Type::getInt64Ty(func.getContext()),
                                               }),
                                {framepointer, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 8),
-                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), -i - 1),
-                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
+                                constOffset, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0)});
+        correctImmediates[ptr].insert(ptr->getOperand(1));
+        correctImmediates[ptr].insert(ptr->getOperand(3));
         alloca->replaceAllUsesWith(ptr);
         alloca->eraseFromParent();
     }
