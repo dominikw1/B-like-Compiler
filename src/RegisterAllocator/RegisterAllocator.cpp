@@ -41,7 +41,7 @@ class RegisterAllocator {
         case 2:
             return 3;
         default:
-            throw std::runtime_error("Too many operands!");
+            throw std::runtime_error("Too many operands!" + std::to_string(operandIndex));
         }
     }
 
@@ -157,6 +157,8 @@ class RegisterAllocator {
                     // this already is a register - allocated instr. Mainly for the 2 calls introduced above
                     if (call->getCalledFunction()->getName().starts_with("R_"))
                         continue;
+                    if (call->getCalledFunction()->getName().starts_with("Jcc"))
+                        continue;
                     if (call->getCalledFunction()->getName().starts_with("FRAME_DESTROY")) {
                         frameDestroys.push_back(call);
                         continue;
@@ -178,29 +180,29 @@ class RegisterAllocator {
                         call->getCalledFunction()->getName().starts_with("FRAME_DESTROY"))
                         continue;
                 }
-                if (dyn_cast<llvm::ReturnInst>(&inst))
+                if (dyn_cast<llvm::ReturnInst>(&inst) || dyn_cast<llvm::BranchInst>(&inst))
                     continue; // require special handling in next step
 
+                std::size_t skipped = 0;
                 for (std::size_t i = 0; i < inst.getNumOperands(); ++i) {
                     auto* op = inst.getOperand(i);
-                    if (!dyn_cast<llvm::Instruction>(op) && !dyn_cast<llvm::Argument>(op))
+                    if (!dyn_cast<llvm::Instruction>(op) && !dyn_cast<llvm::Argument>(op)) {
+                        ++skipped;
                         continue;
-
+                    }
                     if (auto* call = dyn_cast<llvm::CallInst>(op);
                         call && call->getCalledFunction()->getName().starts_with("FRAME_SETUP")) {
                         inst.setOperand(i, getI64(STACK_POINTER_REGISTER));
+                        ++skipped;
                         continue;
-                    }
-                    if (auto* call = dyn_cast<llvm::CallInst>(op)) {
-                        call->print(llvm::errs());
                     }
 
                     // llvm::errs() << "got past check\n";
                     //           llvm::Instruction* instructionResult = cast<llvm::Instruction>(op);
                     //             assert(stackSlot.contains(instructionResult));
                     builder.SetInsertPoint(&inst);
-                    loadFromStack(getRegisterForOperand(i), op, *func.getParent());
-                    inst.setOperand(i, getI64(getRegisterForOperand(i)));
+                    loadFromStack(getRegisterForOperand(i - skipped), op, *func.getParent());
+                    inst.setOperand(i, getI64(getRegisterForOperand(i - skipped)));
                 }
             }
         }
@@ -257,7 +259,9 @@ class RegisterAllocator {
         for (auto& bb : func) {
             for (auto& instr : bb) {
                 if (auto* call = dyn_cast<llvm::CallInst>(&instr)) {
-                    if (call->getCalledFunction()->getName().starts_with("R_")) {
+                    if (call->getCalledFunction()->getName().starts_with("R_") ||
+                        call->getCalledFunction()->getName().starts_with("Jcc")) {
+                        llvm::errs() << "skipping transform of " << call->getCalledFunction()->getName() << "\n";
                         continue;
                     }
                     if (!call->getCalledFunction()->getFunctionType()->getReturnType()->isVoidTy()) {
@@ -275,7 +279,6 @@ class RegisterAllocator {
                             auto* calledFunc = getInstruction(
                                 *func.getParent(), destShiftInstructions[it - destShiftInstructions_PreReg.begin()],
                                 llvm::Type::getVoidTy(context), std::vector<llvm::Type*>(call->arg_size() + 1, i64Ty));
-                            calledFunc->print(llvm::errs());
                             builder.SetInsertPoint(call);
                             builder.CreateCall(calledFunc, args);
                         } else if (auto it = std::find(firstOpDestInstructions_PreReg.begin(),
@@ -290,7 +293,6 @@ class RegisterAllocator {
                             auto* calledFunc = getInstruction(
                                 *func.getParent(), firstOpDestInstructions[it - firstOpDestInstructions_PreReg.begin()],
                                 llvm::Type::getVoidTy(context), std::vector<llvm::Type*>(call->arg_size(), i64Ty));
-                            calledFunc->print(llvm::errs());
                             builder.SetInsertPoint(call);
                             builder.CreateCall(calledFunc, args);
                         } else {
@@ -299,7 +301,6 @@ class RegisterAllocator {
                         }
                     } else {
                         // is void
-                        llvm::errs() << "renaming\n";
                         std::string_view newName =
                             llvm::StringSwitch<std::string_view>(call->getCalledFunction()->getName())
                                 .Case("CMP64rr", "R_CMP64rr"sv)
@@ -312,7 +313,14 @@ class RegisterAllocator {
                                 .Case("MOV16mi", "R_MOV16mi"sv)
                                 .Case("MOV8mr", "R_MOV8mr"sv)
                                 .Case("MOV8mi", "R_MOV8mi"sv);
-                        call->getCalledFunction()->setName(newName);
+                        llvm::SmallVector<llvm::Value*> args;
+                        for (auto& old_arg : call->args()) {
+                            args.push_back(old_arg);
+                        }
+                        auto* calledFunc = getInstruction(*func.getParent(), newName, llvm::Type::getVoidTy(context),
+                                                          std::vector<llvm::Type*>(call->arg_size(), i64Ty));
+                        builder.SetInsertPoint(call);
+                        builder.CreateCall(calledFunc, args);
                     }
                 }
             }
@@ -321,7 +329,8 @@ class RegisterAllocator {
         for (auto& bb : func) {
             for (auto& instr : llvm::make_early_inc_range(bb)) {
                 if (auto* call = dyn_cast<llvm::CallInst>(&instr)) {
-                    if (!call->getCalledFunction()->getName().starts_with("R_")) {
+                    if (!call->getCalledFunction()->getName().starts_with("R_") &&
+                        !call->getCalledFunction()->getName().starts_with("Jcc")) {
                         call->eraseFromParent();
                     }
                 }
