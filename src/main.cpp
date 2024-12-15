@@ -12,7 +12,7 @@
 
 int main(int argc, char** argv) {
     if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " {-c/-a/-l/-i} <input>";
+        std::cerr << "Usage: " << argv[0] << " {-c/-a/-l/-i/-r} <input>";
         return EXIT_FAILURE;
     }
     try {
@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
 
         if (std::string_view{argv[1]}.starts_with("-a")) {
             std::cout << ast.sExpression() << "\n";
+            return EXIT_SUCCESS;
         }
 
         auto IR = generateIR(std::move(ast));
