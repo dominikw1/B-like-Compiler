@@ -1560,7 +1560,8 @@ void fixupConstants(llvm::Function& func) {
                     if (correctImmediates[&instr].contains({op, i})) {
                         continue;
                     }
-                    if (!constants.contains(constInt->getSExtValue())) {
+                    uint64_t intValue = constInt->getBitWidth() == 1 ? constInt->getZExtValue() : constInt->getSExtValue();
+                    if (!constants.contains(intValue)) {
                         llvm::IRBuilder<> builder{func.getContext()};
                         builder.SetInsertPoint(func.getEntryBlock().getFirstInsertionPt());
                         auto* call = builder.CreateCall(
@@ -1568,16 +1569,16 @@ void fixupConstants(llvm::Function& func) {
                                            {
                                                llvm::Type::getInt64Ty(func.getContext()),
                                            }),
-                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), constInt->getSExtValue(),
+                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()),intValue,
                                                     true)});
-                        constants[constInt->getSExtValue()] = call;
+                        constants[intValue] = call;
                     }
                     // llvm::errs() << "replacing constant int op  " << i << " :";
                     // constInt->print(llvm::errs());
                     // llvm::errs() << " in instr ";
                     // instr.print(llvm::errs());
                     // llvm::errs() << "\n";
-                    instr.setOperand(i, constants[constInt->getSExtValue()]);
+                    instr.setOperand(i, constants[intValue]);
                 }
             }
         }
