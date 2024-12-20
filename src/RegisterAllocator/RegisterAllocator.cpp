@@ -1,4 +1,6 @@
 #include "RegisterAllocator.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <array>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/IRBuilder.h>
@@ -59,6 +61,13 @@ class RegisterAllocator {
             {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackSlot[val] * 8)});
     }
 
+    void spillToStackHere(std::uint8_t registerNum, std::uint64_t slot, llvm::Module& module) {
+        builder.CreateCall(
+            getInstruction(module, "R_MOV64mr", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+            {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(slot * 8),
+             getI64(registerNum)});
+    }
+
     void spillToStack(llvm::Instruction& instr) {
         // if (auto* call = dyn_cast<llvm::CallInst>(&instr);
         //   (call && call->getFunctionType()->getReturnType()->isVoidTy()) || dyn_cast<llvm::BranchInst>(&instr)) {
@@ -67,6 +76,10 @@ class RegisterAllocator {
         }
         if (dyn_cast<llvm::ReturnInst>(&instr)) {
             return; // Todo
+        }
+        if (dyn_cast<llvm::PHINode>(&instr)) {
+            stackSlot[&instr] = currStackSlot++;
+            return; // actual storing to be done later, is more complex
         }
         assert(!stackSlot.contains(&instr));
         builder.SetInsertPoint(instr.getNextNode());
@@ -146,6 +159,7 @@ class RegisterAllocator {
                                               {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                {getI64(SPILL_START_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
                                 getI64(ZERO_REGISTER), getI64(0 /*- final stacksize, to be adjusted later*/)});
+
         return {old_stackSetup, spillStart};
     }
 
@@ -173,10 +187,42 @@ class RegisterAllocator {
         return frameDestroys;
     }
 
+    void handlePhis(llvm::Function& func) {
+        func.print(llvm::errs());
+        for (auto& bb : func) {
+            for (auto* pred : llvm::predecessors(&bb)) {
+                if (cast<llvm::BranchInst>(&*pred->rbegin())->isConditional()) {
+                    // skip over cmp and jcc which have to be there
+                    auto* insertPt = pred->rbegin()->getPrevNode()->getPrevNode();
+                    assert(dyn_cast<llvm::CallInst>(insertPt));
+                    builder.SetInsertPoint(insertPt);
+                } else {
+                    builder.SetInsertPoint(cast<llvm::Instruction>(&*pred->rbegin()));
+                }
+                // TODO: if complex cycle
+                // else
+                for (auto& phi : bb.phis()) {
+                    phi.print(llvm::errs());
+                    llvm::errs()<<"stack slot:" << stackSlot[&phi]<<"\n";
+                    assert(stackSlot.contains(&phi));
+                    loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), *func.getParent());
+                    spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], *func.getParent());
+                    llvm::errs() << "\n after handling:\n";
+                    func.print(llvm::errs());
+                    llvm::errs() << "\n";
+                }
+            }
+        }
+    }
+
     void loadSpilledOperands(llvm::Function& func) {
         // handle operands loaded from stack
-        for (auto& bb : llvm::make_early_inc_range(func)) {
+        for (auto& bb : func) {
             for (auto& inst : llvm::make_early_inc_range(bb)) {
+                if (dyn_cast<llvm::PHINode>(&inst)) {
+                    // to be handled later
+                    continue;
+                }
                 if (auto* call = dyn_cast<llvm::CallInst>(&inst)) {
                     // this already is a register - allocated instr
                     if (call->getCalledFunction()->getName().starts_with("R_") ||
@@ -222,6 +268,8 @@ class RegisterAllocator {
                     getInstruction(*func.getParent(), "R_MOV64ri", llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
                     {getI64(RETURN_VALUE_REGISTER), returnInst->getReturnValue()});
             } else {
+                llvm::errs()<<"loading for return: "<<stackSlot[returnInst->getReturnValue()]<<"\n";
+                returnInst->getReturnValue()->print(llvm::errs());
                 assert(stackSlot.contains(returnInst->getReturnValue()));
                 loadFromStack(RETURN_VALUE_REGISTER, returnInst->getReturnValue(), *func.getParent());
             }
@@ -234,8 +282,10 @@ class RegisterAllocator {
         std::uint64_t slots = stackSlot.size();
         auto* stack_alloc = cast<llvm::CallInst>(func.getEntryBlock().getFirstInsertionPt());
         std::uint64_t currVal = dyn_cast<llvm::ConstantInt>(stack_alloc->getOperand(0))->getZExtValue();
-        stack_alloc->setOperand(0, getI64(slots * 8 + currVal));
-        spillInit->setOperand(4, getI64(-(slots * 8 + currVal)));
+        std::uint64_t supposedStackSize = slots * 8 + currVal;
+        stack_alloc->setOperand(0, getI64(supposedStackSize + 16));
+        spillInit->setOperand(4, getI64(-supposedStackSize - 16));
+        // the 16 offset might be unnecessary idk it segfaults if i dont do it because we overwrite fp
     }
 
     constexpr static std::array<std::string_view, 23> destShiftInstructions_PreReg{
@@ -335,7 +385,12 @@ class RegisterAllocator {
                     if (!call->getCalledFunction()->getName().starts_with("R_") &&
                         !call->getCalledFunction()->getName().starts_with("Jcc")) {
                         call->eraseFromParent();
+                        continue;
                     }
+                }
+                if (dyn_cast<llvm::PHINode>(&instr)) {
+                    instr.replaceAllUsesWith(llvm::UndefValue::get(instr.getType()));
+                    instr.eraseFromParent();
                 }
             }
         }
@@ -343,11 +398,13 @@ class RegisterAllocator {
 
   public:
     void allocateFunction(llvm::Function& func) {
+        llvm::SplitAllCriticalEdges(func);
         FrameState frameState = initState(func);
         spillArgsToStack(func);
         auto frameDestroys = allocaStackForEveryInst(func);
         loadSpilledOperands(func);
         handleReturns(func, frameDestroys);
+        handlePhis(func);
         transformInstructions(func);
         updateStackSize(func, frameState.spillInit);
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
@@ -360,5 +417,9 @@ void allocateRegisters(llvm::Module& module) {
         if (func.isDeclaration())
             continue;
         allocator.allocateFunction(func);
+    }
+    if (llvm::verifyModule(module, &llvm::errs())) {
+        module.print(llvm::errs(), nullptr);
+        throw std::runtime_error("Invalid IR!");
     }
 }
