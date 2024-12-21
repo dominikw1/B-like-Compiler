@@ -1736,10 +1736,13 @@ void cleanUp(llvm::Function& func) {
 }
 } // namespace
 
-void doInstructionSelection(llvm::Module& module) {
+llvm::DenseSet<llvm::StringRef> doInstructionSelection(llvm::Module& module) {
     correctImmediates.clear();
-    for (auto& func : module) {
+    llvm::DenseSet<llvm::StringRef> normalFunctions;
+    
+    for (auto& func : llvm::make_early_inc_range(module)) {
         if (!func.isDeclaration()) {
+            normalFunctions.insert(func.getName());
             selectFunction(func);
             cleanUp(func);
         }
@@ -1749,4 +1752,5 @@ void doInstructionSelection(llvm::Module& module) {
 
         throw std::runtime_error("Invalid IR!");
     }
+    return normalFunctions;
 }

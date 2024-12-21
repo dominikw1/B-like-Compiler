@@ -26,6 +26,7 @@ class RegisterAllocator {
     llvm::LLVMContext& context;
     llvm::IRBuilder<> builder;
     llvm::IntegerType* i64Ty;
+    const llvm::DenseSet<llvm::StringRef>& normalFunctions;
 
     constexpr static std::uint8_t RETURN_VALUE_REGISTER = 0;
     constexpr static std::uint8_t DEFAULT_OUTPUT_REGISTER = 1;
@@ -50,8 +51,9 @@ class RegisterAllocator {
     llvm::ConstantInt* getI64(std::int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), v); }
 
   public:
-    RegisterAllocator(llvm::Module* module)
-        : context{module->getContext()}, i64Ty{llvm::Type::getInt64Ty(context)}, builder{context} {}
+    RegisterAllocator(llvm::Module* module, const llvm::DenseSet<llvm::StringRef>& normalFuncs)
+        : context{module->getContext()}, i64Ty{llvm::Type::getInt64Ty(context)}, builder{context},
+          normalFunctions{normalFuncs} {}
 
   private:
     // Precondition: set builder insert point to correct place
@@ -68,6 +70,14 @@ class RegisterAllocator {
         llvm::errs() << "created spill ";
         spill->print(llvm::errs());
         llvm::errs() << "\n";
+    }
+
+    void spillToStackAtStackPointerOffset(std::uint8_t registerNum, std::uint64_t stackPointerOffset,
+                                          llvm::Module& module) {
+        auto* spill = builder.CreateCall(
+            getInstruction(module, "R_MOV64mr", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+            {getI64(FRAME_POINTER_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackPointerOffset),
+             getI64(registerNum)});
     }
 
     void spillToStack(llvm::Instruction& instr) {
@@ -146,7 +156,7 @@ class RegisterAllocator {
         builder.SetInsertPoint(func.getEntryBlock().getFirstInsertionPt());
         auto* newFrameSetup =
             builder.CreateCall(getInstruction(*func.getParent(), "R_FRAME_SETUP", llvm::Type::getVoidTy(context),
-                                              std::vector<llvm::Type*>(frameSetupArgs.size(), i64Ty), true),
+                                              std::vector<llvm::Type*>(2, i64Ty), true),
                                std::move(frameSetupArgs));
         // old_stackSetup->replaceAllUsesWith(newFrameSetup);
         old_stackSetup->removeFromParent();
@@ -229,12 +239,17 @@ class RegisterAllocator {
                 if (auto* call = dyn_cast<llvm::CallInst>(&inst)) {
                     // this already is a register - allocated instr
                     if (call->getCalledFunction()->getName().starts_with("R_") ||
-                        call->getCalledFunction()->getName().starts_with("FRAME_DESTROY"))
+                        call->getCalledFunction()->getName().starts_with("FRAME_DESTROY") ||
+                        normalFunctions.contains(call->getCalledFunction()->getName())) {
+                        llvm::errs() << "skipping func " << call->getCalledFunction()->getName() << "\n";
                         continue;
+                    }
                 }
                 if (dyn_cast<llvm::ReturnInst>(&inst) || dyn_cast<llvm::BranchInst>(&inst))
                     continue; // require special handling in next step
 
+                llvm::errs() << "loading ops for \n";
+                inst.print(llvm::errs());
                 std::size_t skipped = 0;
                 for (std::size_t i = 0; i < inst.getNumOperands(); ++i) {
                     auto* op = inst.getOperand(i);
@@ -289,6 +304,49 @@ class RegisterAllocator {
         stack_alloc->setOperand(0, getI64(supposedStackSize + 16));
         spillInit->setOperand(4, getI64(-supposedStackSize - 16));
         // the 16 offset might be unnecessary idk it segfaults if i dont do it because we overwrite fp
+    }
+
+    void transformCall(llvm::CallInst* oldCall) {
+        oldCall->print(llvm::errs());
+        llvm::errs() << "\n";
+        builder.SetInsertPoint(oldCall);
+        if (oldCall->arg_size() > 6) {
+            builder.CreateCall(
+                getInstruction(*oldCall->getModule(), "R_ADJSTACKDOWN", llvm::Type::getVoidTy(context), {i64Ty}),
+                {getI64(oldCall->arg_size() - 6)});
+        }
+        for (size_t i = 0; i < oldCall->arg_size(); ++i) {
+            if (i < argumentLocationRegister.size()) {
+                if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
+                    llvm::errs() << "is imm\n";
+                    oldCall->getArgOperand(i)->print(llvm::errs());
+                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri",
+                                                      llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
+                                       {getI64(argumentLocationRegister[i]), oldCall->getArgOperand(i)});
+                } else {
+                    loadFromStack(argumentLocationRegister[i], oldCall->getArgOperand(i), *oldCall->getModule());
+                }
+            } else {
+                if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
+                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri",
+                                                      llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
+                                       {getI64(DEFAULT_OUTPUT_REGISTER), oldCall->getArgOperand(i)});
+                } else {
+                    loadFromStack(DEFAULT_OUTPUT_REGISTER, oldCall->getArgOperand(i), *oldCall->getModule());
+                }
+                spillToStackAtStackPointerOffset(DEFAULT_OUTPUT_REGISTER, (i - 6) * 8, *oldCall->getModule());
+            }
+        }
+
+        auto* func = getInstruction(*oldCall->getModule(), "R_CALL", llvm::Type::getVoidTy(context),
+                                    {llvm::PointerType::get(context,0)});
+        builder.CreateCall(func, oldCall->getCalledFunction());
+        if (oldCall->arg_size() > 6) {
+            builder.CreateCall(
+                getInstruction(*oldCall->getModule(), "R_ADJSTACKUP", llvm::Type::getVoidTy(context), {i64Ty}),
+                {getI64(oldCall->arg_size() - 6)});
+        }
+        spillToStackHere(RETURN_VALUE_REGISTER, stackSlot[oldCall], *oldCall->getModule());
     }
 
     constexpr static std::array<std::string_view, 23> destShiftInstructions_PreReg{
@@ -352,10 +410,11 @@ class RegisterAllocator {
                             builder.SetInsertPoint(call);
                             builder.CreateCall(calledFunc, args);
                         } else {
-                            call->print(llvm::errs());
-                            throw std::runtime_error("cannot deal with yet");
+                            // normal call
+                            transformCall(call);
                         }
                     } else {
+                        call->print(llvm::errs());
                         // is void
                         std::string_view newName =
                             llvm::StringSwitch<std::string_view>(call->getCalledFunction()->getName())
@@ -372,7 +431,11 @@ class RegisterAllocator {
                         llvm::SmallVector<llvm::Value*> args;
                         for (auto& old_arg : call->args()) {
                             args.push_back(old_arg);
+                            llvm::errs() << "arg: ";
+                            old_arg->print(llvm::errs());
+                            llvm::errs() << "\n";
                         }
+
                         auto* calledFunc = getInstruction(*func.getParent(), newName, llvm::Type::getVoidTy(context),
                                                           std::vector<llvm::Type*>(call->arg_size(), i64Ty));
                         builder.SetInsertPoint(call);
@@ -381,6 +444,8 @@ class RegisterAllocator {
                 }
             }
         }
+
+        func.print(llvm::errs());
 
         for (auto& bb : func) {
             for (auto& instr : llvm::make_early_inc_range(bb)) {
@@ -412,23 +477,24 @@ class RegisterAllocator {
         }
         loadSpilledOperands(func);
         handleReturns(func, frameDestroys);
+        llvm::errs() << "handle phis\n";
         handlePhis(func);
+        llvm::errs() << "handled phis\n";
         transformInstructions(func);
+        llvm::errs() << "transformed\n";
         updateStackSize(func, frameState.spillInit);
+        llvm::errs() << "updated\n";
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
+        stackSlot.clear();
+        currStackSlot = 0;
     }
 };
 
-void allocateRegisters(llvm::Module& module) {
-    RegisterAllocator allocator{&module};
+void allocateRegisters(llvm::Module& module, const llvm::DenseSet<llvm::StringRef>& normalFunctions) {
+    RegisterAllocator allocator{&module, normalFunctions};
     for (auto& func : module) {
         if (func.isDeclaration())
             continue;
         allocator.allocateFunction(func);
-    }
-
-    if (llvm::verifyModule(module, &llvm::errs())) {
-        module.print(llvm::errs(), nullptr);
-        throw std::runtime_error("Invalid IR!");
     }
 }

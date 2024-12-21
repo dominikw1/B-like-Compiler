@@ -39,13 +39,13 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
 
-        doInstructionSelection(*IR.module);
+        auto normalFunctions = doInstructionSelection(*IR.module);
         if (std::string_view{argv[1]}.starts_with("-i")) {
             IR.module->print(llvm::outs(), nullptr);
             return EXIT_SUCCESS;
         }
 
-        allocateRegisters(*IR.module);
+        allocateRegisters(*IR.module, normalFunctions);
         if (std::string_view{argv[1]}.starts_with("-r")) {
             IR.module->print(llvm::outs(), nullptr);
             return EXIT_SUCCESS;
