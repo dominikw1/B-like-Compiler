@@ -62,10 +62,12 @@ class RegisterAllocator {
     }
 
     void spillToStackHere(std::uint8_t registerNum, std::uint64_t slot, llvm::Module& module) {
-        builder.CreateCall(
+        auto* spill = builder.CreateCall(
             getInstruction(module, "R_MOV64mr", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
-            {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(slot * 8),
-             getI64(registerNum)});
+            {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(slot * 8), getI64(registerNum)});
+        llvm::errs() << "created spill ";
+        spill->print(llvm::errs());
+        llvm::errs() << "\n";
     }
 
     void spillToStack(llvm::Instruction& instr) {
@@ -188,7 +190,7 @@ class RegisterAllocator {
     }
 
     void handlePhis(llvm::Function& func) {
-        func.print(llvm::errs());
+        //  func.print(llvm::errs());
         for (auto& bb : func) {
             for (auto* pred : llvm::predecessors(&bb)) {
                 if (cast<llvm::BranchInst>(&*pred->rbegin())->isConditional()) {
@@ -202,14 +204,15 @@ class RegisterAllocator {
                 // TODO: if complex cycle
                 // else
                 for (auto& phi : bb.phis()) {
-                    phi.print(llvm::errs());
-                    llvm::errs()<<"stack slot:" << stackSlot[&phi]<<"\n";
+                    llvm::errs() << "handling " << phi.getName() << " for block " << pred->getName() << "\n";
+                    //            phi.print(llvm::errs());
+                    //          llvm::errs()<<"stack slot:" << stackSlot[&phi]<<"\n";
                     assert(stackSlot.contains(&phi));
                     loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), *func.getParent());
                     spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], *func.getParent());
-                    llvm::errs() << "\n after handling:\n";
-                    func.print(llvm::errs());
-                    llvm::errs() << "\n";
+                    //        llvm::errs() << "\n after handling:\n";
+                    //      func.print(llvm::errs());
+                    //    llvm::errs() << "\n";
                 }
             }
         }
@@ -268,7 +271,7 @@ class RegisterAllocator {
                     getInstruction(*func.getParent(), "R_MOV64ri", llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
                     {getI64(RETURN_VALUE_REGISTER), returnInst->getReturnValue()});
             } else {
-                llvm::errs()<<"loading for return: "<<stackSlot[returnInst->getReturnValue()]<<"\n";
+                llvm::errs() << "loading for return: " << stackSlot[returnInst->getReturnValue()] * 8 << "\n";
                 returnInst->getReturnValue()->print(llvm::errs());
                 assert(stackSlot.contains(returnInst->getReturnValue()));
                 loadFromStack(RETURN_VALUE_REGISTER, returnInst->getReturnValue(), *func.getParent());
@@ -314,7 +317,7 @@ class RegisterAllocator {
                 if (auto* call = dyn_cast<llvm::CallInst>(&instr)) {
                     if (call->getCalledFunction()->getName().starts_with("R_") ||
                         call->getCalledFunction()->getName().starts_with("Jcc")) {
-                        llvm::errs() << "skipping transform of " << call->getCalledFunction()->getName() << "\n";
+                        // llvm::errs() << "skipping transform of " << call->getCalledFunction()->getName() << "\n";
                         continue;
                     }
                     if (!call->getCalledFunction()->getFunctionType()->getReturnType()->isVoidTy()) {
@@ -402,6 +405,11 @@ class RegisterAllocator {
         FrameState frameState = initState(func);
         spillArgsToStack(func);
         auto frameDestroys = allocaStackForEveryInst(func);
+        llvm::errs() << "\n";
+        for (auto& [val, slot] : stackSlot) {
+            val->print(llvm::errs());
+            llvm::errs() << " -> " << slot * 8 << "\n";
+        }
         loadSpilledOperands(func);
         handleReturns(func, frameDestroys);
         handlePhis(func);
@@ -418,6 +426,7 @@ void allocateRegisters(llvm::Module& module) {
             continue;
         allocator.allocateFunction(func);
     }
+
     if (llvm::verifyModule(module, &llvm::errs())) {
         module.print(llvm::errs(), nullptr);
         throw std::runtime_error("Invalid IR!");

@@ -17,7 +17,7 @@ struct pairhash {
     }
 };
 
-std::unordered_map<llvm::Value*, std::unordered_set<std::pair<llvm::Value*, size_t>,pairhash>> correctImmediates;
+std::unordered_map<llvm::Value*, std::unordered_set<std::pair<llvm::Value*, size_t>, pairhash>> correctImmediates;
 
 std::uint64_t getCondCode(llvm::CmpInst* cmpInst) {
     switch (cmpInst->getPredicate()) {
@@ -372,7 +372,7 @@ struct ADD64ri : public Pattern {
         assert(dyn_cast<llvm::Instruction>(rootVal));
         auto* root = cast<llvm::Instruction>(rootVal);
         covered.insert(root);
-        if (isConst(root->getOperand(0))) {
+        if (isConstAndFits(root->getOperand(0))) {
             covered.insert(root->getOperand(0));
         } else {
             covered.insert(root->getOperand(1));
@@ -392,7 +392,7 @@ struct ADD64ri : public Pattern {
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                            llvm::Type::getInt64Ty(module.getContext()),
                                                                        }),
-                                                        {root->getOperand(0), root->getOperand(1)});
+                                                        {registerVal, immediate});
         correctImmediates[call].emplace(call->getOperand(1), 1);
         root->replaceAllUsesWith(call);
         root->eraseFromParent();
@@ -1560,7 +1560,8 @@ void fixupConstants(llvm::Function& func) {
                     if (correctImmediates[&instr].contains({op, i})) {
                         continue;
                     }
-                    uint64_t intValue = constInt->getBitWidth() == 1 ? constInt->getZExtValue() : constInt->getSExtValue();
+                    uint64_t intValue =
+                        constInt->getBitWidth() == 1 ? constInt->getZExtValue() : constInt->getSExtValue();
                     if (!constants.contains(intValue)) {
                         llvm::IRBuilder<> builder{func.getContext()};
                         builder.SetInsertPoint(func.getEntryBlock().getFirstInsertionPt());
@@ -1569,8 +1570,7 @@ void fixupConstants(llvm::Function& func) {
                                            {
                                                llvm::Type::getInt64Ty(func.getContext()),
                                            }),
-                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()),intValue,
-                                                    true)});
+                            {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), intValue, true)});
                         constants[intValue] = call;
                     }
                     // llvm::errs() << "replacing constant int op  " << i << " :";
