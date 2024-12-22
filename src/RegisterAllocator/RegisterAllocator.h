@@ -1,4 +1,4 @@
 #pragma once
 #include "llvm/IR/Module.h"
 
-void allocateRegisters(llvm::Module& module,const llvm::DenseSet<llvm::StringRef>&normalFunctions);
+void allocateRegisters(llvm::Module& module, llvm::DenseSet<llvm::StringRef>& normalFunctions);

@@ -26,12 +26,14 @@ class RegisterAllocator {
     llvm::LLVMContext& context;
     llvm::IRBuilder<> builder;
     llvm::IntegerType* i64Ty;
+
     const llvm::DenseSet<llvm::StringRef>& normalFunctions;
 
     constexpr static std::uint8_t RETURN_VALUE_REGISTER = 0;
     constexpr static std::uint8_t DEFAULT_OUTPUT_REGISTER = 1;
     constexpr static std::uint8_t STACK_POINTER_REGISTER = 5;
     constexpr static std::uint8_t FRAME_POINTER_REGISTER = 4;
+    constexpr static std::uint8_t PHI_TEMP_REGISTER = 13;
     constexpr static std::uint8_t SPILL_START_REGISTER = 14;
     constexpr static std::uint8_t ZERO_REGISTER = 15;
 
@@ -189,6 +191,10 @@ class RegisterAllocator {
                         frameDestroys.push_back(call);
                         continue;
                     }
+                    if (normalFunctions.contains(call->getCalledFunction()->getName())) {
+                        stackSlot[call] = currStackSlot++;
+                        continue; // will be loaded later
+                    }
                     if (call->getCalledFunction()->getReturnType()->isVoidTy()) {
                         continue;
                     }
@@ -199,9 +205,83 @@ class RegisterAllocator {
         return frameDestroys;
     }
 
+    void handleSimplePhi(llvm::PHINode& phi, llvm::BasicBlock* pred, llvm::Function& func) {
+        llvm::errs() << "handling " << phi.getName() << " for block " << pred->getName() << "\n";
+        //            phi.print(llvm::errs());
+        //          llvm::errs()<<"stack slot:" << stackSlot[&phi]<<"\n";
+        assert(stackSlot.contains(&phi));
+        loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), *func.getParent());
+        spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], *func.getParent());
+        //        llvm::errs() << "\n after handling:\n";
+        //      func.print(llvm::errs());
+        //    llvm::errs() << "\n";
+    }
+
+    using PhiGraph = llvm::DenseMap<llvm::PHINode*, llvm::DenseSet<llvm::PHINode*>>;
+
+    uint64_t getNumPhisReadingPhiOnSameEdge(llvm::PHINode* currPhi, PhiGraph& readByGraph) {
+        uint64_t num = 0;
+        for (auto* phi : readByGraph[currPhi]) {
+            if (phi != currPhi)
+                ++num;
+        }
+        return num;
+    }
+
+    void handlePhiChain(llvm::PHINode* phi, llvm::BasicBlock* pred, llvm::DenseSet<llvm::PHINode*>& handled,
+                        PhiGraph& readsGraph, PhiGraph& readByGraph) {
+        if (handled.contains(phi))
+            return;
+        if (getNumPhisReadingPhiOnSameEdge(phi, readByGraph) != 0) {
+            return;
+        }
+        handleSimplePhi(*phi, pred, *phi->getFunction());
+        handled.insert(phi);
+        for (auto* readee : readsGraph[phi]) {
+            readByGraph[readee].erase(phi);
+            handlePhiChain(readee, pred, handled, readsGraph, readByGraph);
+        }
+    }
+
+    std::pair<PhiGraph, PhiGraph> generatePhiDependencyGraph(llvm::BasicBlock& curr, llvm::BasicBlock* prev) {
+        PhiGraph reads;
+        PhiGraph readBy;
+
+        for (auto& phi : curr.phis()) {
+            auto* incomingVal = phi.getIncomingValueForBlock(prev);
+            if (auto* other = dyn_cast<llvm::PHINode>(incomingVal);
+                other && other != &phi && other->getParent() == &curr) {
+                readBy[other].insert(&phi);
+                reads[&phi].insert(other);
+            }
+        }
+        return {reads, readBy};
+    }
+
+    void dumpPhiGraph(PhiGraph& graph) {
+        for (auto& [phi, deps] : graph) {
+            phi->print(llvm::errs());
+            llvm::errs() << " -> \n";
+            for (auto* dep : deps) {
+                dep->print(llvm::errs());
+            }
+            llvm::errs() << "\n";
+        }
+    }
+
+    constexpr bool hasPhis(llvm::BasicBlock& block) {
+        for (auto& phi : block.phis()) {
+            return true;
+        }
+        return false;
+    }
+
     void handlePhis(llvm::Function& func) {
         //  func.print(llvm::errs());
         for (auto& bb : func) {
+            if (!hasPhis(bb))
+                continue;
+
             for (auto* pred : llvm::predecessors(&bb)) {
                 if (cast<llvm::BranchInst>(&*pred->rbegin())->isConditional()) {
                     // skip over cmp and jcc which have to be there
@@ -213,16 +293,57 @@ class RegisterAllocator {
                 }
                 // TODO: if complex cycle
                 // else
+
+                llvm::DenseSet<llvm::PHINode*> handledPhis;
+                auto [readsGraph, readByGraph] = generatePhiDependencyGraph(bb, pred);
+                llvm::errs() << "Reads graph:\n";
+                dumpPhiGraph(readsGraph);
+                llvm::errs() << "\nRead by graph:\n";
+                dumpPhiGraph(readByGraph);
+
+                llvm::errs() << "\n\n";
+
                 for (auto& phi : bb.phis()) {
-                    llvm::errs() << "handling " << phi.getName() << " for block " << pred->getName() << "\n";
-                    //            phi.print(llvm::errs());
-                    //          llvm::errs()<<"stack slot:" << stackSlot[&phi]<<"\n";
-                    assert(stackSlot.contains(&phi));
-                    loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), *func.getParent());
-                    spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], *func.getParent());
-                    //        llvm::errs() << "\n after handling:\n";
-                    //      func.print(llvm::errs());
-                    //    llvm::errs() << "\n";
+                    // maybe trivial phi
+                    handlePhiChain(&phi, pred, handledPhis, readsGraph, readByGraph);
+                }
+
+                for (auto& phi : bb.phis()) {
+                    if (!handledPhis.contains(&phi)) {
+                        phi.print(llvm::errs());
+                        llvm::errs() << " is read by \n";
+                        for (auto* reader : readByGraph[&phi]) {
+                            reader->print(llvm::errs());
+                        }
+                        assert(getNumPhisReadingPhiOnSameEdge(&phi, readByGraph) == 1);
+                        /*llvm::PHINode* readingPhi = [&phi, &readByGraph]() {
+                            if (readByGraph[&phi].size() == 1) {
+                                return *readByGraph[&phi].begin();
+                            }
+                            assert(readByGraph[&phi].size() == 2);
+                            if (*readByGraph[&phi].begin() == &phi) {
+                                return *readByGraph[&phi].begin();
+                            }
+                            return *(++readByGraph[&phi].begin());
+                        }();*/
+
+                        // let's choose this node arbitrarily
+                        // 1) load to register
+                        loadFromStack(PHI_TEMP_REGISTER, &phi, *phi.getModule());
+                        handledPhis.insert(&phi);
+
+                        // 2) go down chains
+                        for (auto* readee : readsGraph[&phi]) {
+                            readByGraph[readee].erase(&phi);
+                            handlePhiChain(readee, pred, handledPhis, readsGraph, readByGraph);
+                        }
+                        // 3) write temp register to target(s)
+                        for (auto* reader : readByGraph[&phi]) {
+                            llvm::errs() << "storing in phi!!!\n";
+                            assert(stackSlot.contains(reader));
+                            spillToStackHere(PHI_TEMP_REGISTER, stackSlot[reader], *func.getParent());
+                        }
+                    }
                 }
             }
         }
@@ -286,6 +407,7 @@ class RegisterAllocator {
                     getInstruction(*func.getParent(), "R_MOV64ri", llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
                     {getI64(RETURN_VALUE_REGISTER), returnInst->getReturnValue()});
             } else {
+                assert(stackSlot.contains(returnInst->getReturnValue()));
                 llvm::errs() << "loading for return: " << stackSlot[returnInst->getReturnValue()] * 8 << "\n";
                 returnInst->getReturnValue()->print(llvm::errs());
                 assert(stackSlot.contains(returnInst->getReturnValue()));
@@ -307,6 +429,7 @@ class RegisterAllocator {
     }
 
     void transformCall(llvm::CallInst* oldCall) {
+
         oldCall->print(llvm::errs());
         llvm::errs() << "\n";
         builder.SetInsertPoint(oldCall);
@@ -339,7 +462,7 @@ class RegisterAllocator {
         }
 
         auto* func = getInstruction(*oldCall->getModule(), "R_CALL", llvm::Type::getVoidTy(context),
-                                    {llvm::PointerType::get(context,0)});
+                                    {llvm::PointerType::get(context, 0)});
         builder.CreateCall(func, oldCall->getCalledFunction());
         if (oldCall->arg_size() > 6) {
             builder.CreateCall(
@@ -484,15 +607,16 @@ class RegisterAllocator {
         llvm::errs() << "transformed\n";
         updateStackSize(func, frameState.spillInit);
         llvm::errs() << "updated\n";
+        func.getParent()->print(llvm::errs(), nullptr);
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
         stackSlot.clear();
         currStackSlot = 0;
     }
 };
 
-void allocateRegisters(llvm::Module& module, const llvm::DenseSet<llvm::StringRef>& normalFunctions) {
+void allocateRegisters(llvm::Module& module, llvm::DenseSet<llvm::StringRef>& normalFunctions) {
     RegisterAllocator allocator{&module, normalFunctions};
-    for (auto& func : module) {
+    for (auto& func : llvm::make_early_inc_range(module)) {
         if (func.isDeclaration())
             continue;
         allocator.allocateFunction(func);
