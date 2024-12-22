@@ -69,9 +69,6 @@ class RegisterAllocator {
         auto* spill = builder.CreateCall(
             getInstruction(module, "R_MOV64mr", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
             {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(slot * 8), getI64(registerNum)});
-        llvm::errs() << "created spill ";
-        spill->print(llvm::errs());
-        llvm::errs() << "\n";
     }
 
     void spillToStackAtStackPointerOffset(std::uint8_t registerNum, std::uint64_t stackPointerOffset,
@@ -206,15 +203,9 @@ class RegisterAllocator {
     }
 
     void handleSimplePhi(llvm::PHINode& phi, llvm::BasicBlock* pred, llvm::Function& func) {
-        llvm::errs() << "handling " << phi.getName() << " for block " << pred->getName() << "\n";
-        //            phi.print(llvm::errs());
-        //          llvm::errs()<<"stack slot:" << stackSlot[&phi]<<"\n";
         assert(stackSlot.contains(&phi));
         loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), *func.getParent());
         spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], *func.getParent());
-        //        llvm::errs() << "\n after handling:\n";
-        //      func.print(llvm::errs());
-        //    llvm::errs() << "\n";
     }
 
     using PhiGraph = llvm::DenseMap<llvm::PHINode*, llvm::DenseSet<llvm::PHINode*>>;
@@ -296,12 +287,6 @@ class RegisterAllocator {
 
                 llvm::DenseSet<llvm::PHINode*> handledPhis;
                 auto [readsGraph, readByGraph] = generatePhiDependencyGraph(bb, pred);
-                llvm::errs() << "Reads graph:\n";
-                dumpPhiGraph(readsGraph);
-                llvm::errs() << "\nRead by graph:\n";
-                dumpPhiGraph(readByGraph);
-
-                llvm::errs() << "\n\n";
 
                 for (auto& phi : bb.phis()) {
                     // maybe trivial phi
@@ -310,12 +295,12 @@ class RegisterAllocator {
 
                 for (auto& phi : bb.phis()) {
                     if (!handledPhis.contains(&phi)) {
-                        phi.print(llvm::errs());
-                        llvm::errs() << " is read by \n";
-                        for (auto* reader : readByGraph[&phi]) {
-                            reader->print(llvm::errs());
-                        }
                         assert(getNumPhisReadingPhiOnSameEdge(&phi, readByGraph) == 1);
+                        auto readers = readByGraph[&phi];
+                        for (auto* reader : readers) {
+                            handledPhis.insert(reader);
+                        }
+                        readByGraph[&phi].clear();
                         /*llvm::PHINode* readingPhi = [&phi, &readByGraph]() {
                             if (readByGraph[&phi].size() == 1) {
                                 return *readByGraph[&phi].begin();
@@ -330,16 +315,12 @@ class RegisterAllocator {
                         // let's choose this node arbitrarily
                         // 1) load to register
                         loadFromStack(PHI_TEMP_REGISTER, &phi, *phi.getModule());
-                        handledPhis.insert(&phi);
 
                         // 2) go down chains
-                        for (auto* readee : readsGraph[&phi]) {
-                            readByGraph[readee].erase(&phi);
-                            handlePhiChain(readee, pred, handledPhis, readsGraph, readByGraph);
-                        }
+                        handlePhiChain(&phi, pred, handledPhis, readsGraph, readByGraph);
+
                         // 3) write temp register to target(s)
-                        for (auto* reader : readByGraph[&phi]) {
-                            llvm::errs() << "storing in phi!!!\n";
+                        for (auto* reader : readers) {
                             assert(stackSlot.contains(reader));
                             spillToStackHere(PHI_TEMP_REGISTER, stackSlot[reader], *func.getParent());
                         }
@@ -362,15 +343,12 @@ class RegisterAllocator {
                     if (call->getCalledFunction()->getName().starts_with("R_") ||
                         call->getCalledFunction()->getName().starts_with("FRAME_DESTROY") ||
                         normalFunctions.contains(call->getCalledFunction()->getName())) {
-                        llvm::errs() << "skipping func " << call->getCalledFunction()->getName() << "\n";
                         continue;
                     }
                 }
                 if (dyn_cast<llvm::ReturnInst>(&inst) || dyn_cast<llvm::BranchInst>(&inst))
                     continue; // require special handling in next step
 
-                llvm::errs() << "loading ops for \n";
-                inst.print(llvm::errs());
                 std::size_t skipped = 0;
                 for (std::size_t i = 0; i < inst.getNumOperands(); ++i) {
                     auto* op = inst.getOperand(i);
@@ -408,9 +386,6 @@ class RegisterAllocator {
                     {getI64(RETURN_VALUE_REGISTER), returnInst->getReturnValue()});
             } else {
                 assert(stackSlot.contains(returnInst->getReturnValue()));
-                llvm::errs() << "loading for return: " << stackSlot[returnInst->getReturnValue()] * 8 << "\n";
-                returnInst->getReturnValue()->print(llvm::errs());
-                assert(stackSlot.contains(returnInst->getReturnValue()));
                 loadFromStack(RETURN_VALUE_REGISTER, returnInst->getReturnValue(), *func.getParent());
             }
             auto* destroy = builder.CreateCall(getInstruction(*func.getParent(), "R_FRAME_DESTROY", i64Ty, {}), {});
@@ -429,9 +404,6 @@ class RegisterAllocator {
     }
 
     void transformCall(llvm::CallInst* oldCall) {
-
-        oldCall->print(llvm::errs());
-        llvm::errs() << "\n";
         builder.SetInsertPoint(oldCall);
         if (oldCall->arg_size() > 6) {
             builder.CreateCall(
@@ -441,8 +413,6 @@ class RegisterAllocator {
         for (size_t i = 0; i < oldCall->arg_size(); ++i) {
             if (i < argumentLocationRegister.size()) {
                 if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
-                    llvm::errs() << "is imm\n";
-                    oldCall->getArgOperand(i)->print(llvm::errs());
                     builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri",
                                                       llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
                                        {getI64(argumentLocationRegister[i]), oldCall->getArgOperand(i)});
@@ -537,7 +507,6 @@ class RegisterAllocator {
                             transformCall(call);
                         }
                     } else {
-                        call->print(llvm::errs());
                         // is void
                         std::string_view newName =
                             llvm::StringSwitch<std::string_view>(call->getCalledFunction()->getName())
@@ -554,9 +523,6 @@ class RegisterAllocator {
                         llvm::SmallVector<llvm::Value*> args;
                         for (auto& old_arg : call->args()) {
                             args.push_back(old_arg);
-                            llvm::errs() << "arg: ";
-                            old_arg->print(llvm::errs());
-                            llvm::errs() << "\n";
                         }
 
                         auto* calledFunc = getInstruction(*func.getParent(), newName, llvm::Type::getVoidTy(context),
@@ -567,8 +533,6 @@ class RegisterAllocator {
                 }
             }
         }
-
-        func.print(llvm::errs());
 
         for (auto& bb : func) {
             for (auto& instr : llvm::make_early_inc_range(bb)) {
@@ -593,21 +557,11 @@ class RegisterAllocator {
         FrameState frameState = initState(func);
         spillArgsToStack(func);
         auto frameDestroys = allocaStackForEveryInst(func);
-        llvm::errs() << "\n";
-        for (auto& [val, slot] : stackSlot) {
-            val->print(llvm::errs());
-            llvm::errs() << " -> " << slot * 8 << "\n";
-        }
         loadSpilledOperands(func);
         handleReturns(func, frameDestroys);
-        llvm::errs() << "handle phis\n";
         handlePhis(func);
-        llvm::errs() << "handled phis\n";
         transformInstructions(func);
-        llvm::errs() << "transformed\n";
         updateStackSize(func, frameState.spillInit);
-        llvm::errs() << "updated\n";
-        func.getParent()->print(llvm::errs(), nullptr);
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
         stackSlot.clear();
         currStackSlot = 0;
