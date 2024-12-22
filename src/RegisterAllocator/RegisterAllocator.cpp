@@ -25,8 +25,9 @@ class RegisterAllocator {
     std::uint64_t currStackSlot = 0;
     llvm::LLVMContext& context;
     llvm::IRBuilder<> builder;
+    llvm::Module& module;
     llvm::IntegerType* i64Ty;
-
+    llvm::Type* voidTy;
     const llvm::DenseSet<llvm::StringRef>& normalFunctions;
 
     constexpr static std::uint8_t RETURN_VALUE_REGISTER = 0;
@@ -55,28 +56,35 @@ class RegisterAllocator {
   public:
     RegisterAllocator(llvm::Module* module, const llvm::DenseSet<llvm::StringRef>& normalFuncs)
         : context{module->getContext()}, i64Ty{llvm::Type::getInt64Ty(context)}, builder{context},
-          normalFunctions{normalFuncs} {}
+          normalFunctions{normalFuncs}, module{*module}, voidTy{llvm::Type::getVoidTy(context)} {}
 
   private:
     // Precondition: set builder insert point to correct place
     void loadFromStack(std::uint8_t dest, llvm::Value* val, llvm::Module& module) {
         builder.CreateCall(
-            getInstruction(module, "R_MOV64rm", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+            getInstruction(module, "R_MOV64rm", voidTy, {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
             {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackSlot[val] * 8)});
+    }
+
+    // Precondition: set builder insert point to correct place
+    void loadFromStack(std::uint8_t dest, std::uint64_t slot, llvm::Module& module) {
+        builder.CreateCall(
+            getInstruction(module, "R_MOV64rm", voidTy, {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+            {getI64(dest), getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(slot * 8)});
     }
 
     void spillToStackHere(std::uint8_t registerNum, std::uint64_t slot, llvm::Module& module) {
         auto* spill = builder.CreateCall(
-            getInstruction(module, "R_MOV64mr", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+            getInstruction(module, "R_MOV64mr", voidTy, {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
             {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(slot * 8), getI64(registerNum)});
     }
 
     void spillToStackAtStackPointerOffset(std::uint8_t registerNum, std::uint64_t stackPointerOffset,
                                           llvm::Module& module) {
-        auto* spill = builder.CreateCall(
-            getInstruction(module, "R_MOV64mr", llvm::Type::getVoidTy(context), {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
-            {getI64(FRAME_POINTER_REGISTER), getI64(8), getI64(ZERO_REGISTER), getI64(stackPointerOffset),
-             getI64(registerNum)});
+        auto* spill =
+            builder.CreateCall(getInstruction(module, "R_MOV64mr", voidTy, {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+                               {getI64(FRAME_POINTER_REGISTER), getI64(8), getI64(ZERO_REGISTER),
+                                getI64(stackPointerOffset), getI64(registerNum)});
     }
 
     void spillToStack(llvm::Instruction& instr) {
@@ -109,26 +117,32 @@ class RegisterAllocator {
         // spill all args to stack
         for (size_t i = 0; i < func.arg_size(); ++i) {
             auto* arg = func.getArg(i);
+            if (arg->getNumUses() == 1) {
+                continue;
+            } else {
+                arg->print(llvm::errs());
+                llvm::errs() << arg->getNumUses() << "\n";
+            }
             if (i < 6) {
                 // passed in register
                 const uint8_t register_num = argumentLocationRegister[i];
                 auto* store =
-                    builder.CreateCall(getInstruction(*func.getParent(), "R_MOV64mr", llvm::Type::getVoidTy(context),
-                                                      {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+                    builder.CreateCall(getInstruction(module, "R_MOV64mr", voidTy, {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                        {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER),
                                         getI64(currStackSlot * 8), getI64(register_num)});
                 stackSlot[arg] = currStackSlot++;
             } else {
-                // passed on stack anyway, but let's just copy them to where we can actually use them easily
-                builder.CreateCall(getInstruction(*func.getParent(), "R_MOV64rm", llvm::Type::getVoidTy(context),
-                                                  {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
-                                   {getI64(DEFAULT_OUTPUT_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
-                                    getI64(ZERO_REGISTER), getI64(16 + (i - 6) * 8)});
-                builder.CreateCall(getInstruction(*func.getParent(), "R_MOV64mr", llvm::Type::getVoidTy(context),
-                                                  {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
-                                   {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER),
-                                    getI64(currStackSlot * 8), getI64(DEFAULT_OUTPUT_REGISTER)});
-                stackSlot[arg] = currStackSlot++;
+                // the ones that are used are loaded in instruction selection anyway...
+                /* // passed on stack anyway, but let's just copy them to where we can actually use them easily
+                 builder.CreateCall(getInstruction(module, "R_MOV64rm", voidTy,
+                                                   {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+                                    {getI64(DEFAULT_OUTPUT_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
+                                     getI64(ZERO_REGISTER), getI64(16 + (i - 6) * 8)});
+                 builder.CreateCall(getInstruction(module, "R_MOV64mr", voidTy,
+                                                   {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+                                    {getI64(SPILL_START_REGISTER), getI64(8), getI64(ZERO_REGISTER),
+                                     getI64(currStackSlot * 8), getI64(DEFAULT_OUTPUT_REGISTER)});
+                 stackSlot[arg] = currStackSlot++;*/
             }
         }
     }
@@ -153,24 +167,20 @@ class RegisterAllocator {
         }
 
         builder.SetInsertPoint(func.getEntryBlock().getFirstInsertionPt());
-        auto* newFrameSetup =
-            builder.CreateCall(getInstruction(*func.getParent(), "R_FRAME_SETUP", llvm::Type::getVoidTy(context),
-                                              std::vector<llvm::Type*>(2, i64Ty), true),
-                               std::move(frameSetupArgs));
+        auto* newFrameSetup = builder.CreateCall(
+            getInstruction(module, "R_FRAME_SETUP", voidTy, std::vector<llvm::Type*>(2, i64Ty), true),
+            std::move(frameSetupArgs));
         // old_stackSetup->replaceAllUsesWith(newFrameSetup);
         old_stackSetup->removeFromParent();
         builder.SetInsertPoint(newFrameSetup->getNextNode());
-        builder.CreateCall(
-            getInstruction(*func.getParent(), "R_MOV64ri", llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
-            {getI64(ZERO_REGISTER), getI64(0)}); // initialise zero register with 0 - not to be touched
-                                                 // anymore! TODO: only do this if we are in main
+        builder.CreateCall(getInstruction(module, "R_MOV64ri", voidTy, {i64Ty, i64Ty}),
+                           {getI64(ZERO_REGISTER), getI64(0)}); // initialise zero register with 0 - not to be touched
+                                                                // anymore! TODO: only do this if we are in main
         // initialise stack spill start
         auto* spillStart =
-            builder.CreateCall(getInstruction(*func.getParent(), "R_LEA64rm", llvm::Type::getVoidTy(context),
-                                              {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
+            builder.CreateCall(getInstruction(module, "R_LEA64rm", voidTy, {i64Ty, i64Ty, i64Ty, i64Ty, i64Ty}),
                                {getI64(SPILL_START_REGISTER), getI64(STACK_POINTER_REGISTER), getI64(8),
                                 getI64(ZERO_REGISTER), getI64(0 /*- final stacksize, to be adjusted later*/)});
-
         return {old_stackSetup, spillStart};
     }
 
@@ -204,8 +214,8 @@ class RegisterAllocator {
 
     void handleSimplePhi(llvm::PHINode& phi, llvm::BasicBlock* pred, llvm::Function& func) {
         assert(stackSlot.contains(&phi));
-        loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), *func.getParent());
-        spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], *func.getParent());
+        loadFromStack(DEFAULT_OUTPUT_REGISTER, phi.getIncomingValueForBlock(pred), module);
+        spillToStackHere(DEFAULT_OUTPUT_REGISTER, stackSlot[&phi], module);
     }
 
     using PhiGraph = llvm::DenseMap<llvm::PHINode*, llvm::DenseSet<llvm::PHINode*>>;
@@ -282,9 +292,6 @@ class RegisterAllocator {
                 } else {
                     builder.SetInsertPoint(cast<llvm::Instruction>(&*pred->rbegin()));
                 }
-                // TODO: if complex cycle
-                // else
-
                 llvm::DenseSet<llvm::PHINode*> handledPhis;
                 auto [readsGraph, readByGraph] = generatePhiDependencyGraph(bb, pred);
 
@@ -301,18 +308,6 @@ class RegisterAllocator {
                             handledPhis.insert(reader);
                         }
                         readByGraph[&phi].clear();
-                        /*llvm::PHINode* readingPhi = [&phi, &readByGraph]() {
-                            if (readByGraph[&phi].size() == 1) {
-                                return *readByGraph[&phi].begin();
-                            }
-                            assert(readByGraph[&phi].size() == 2);
-                            if (*readByGraph[&phi].begin() == &phi) {
-                                return *readByGraph[&phi].begin();
-                            }
-                            return *(++readByGraph[&phi].begin());
-                        }();*/
-
-                        // let's choose this node arbitrarily
                         // 1) load to register
                         loadFromStack(PHI_TEMP_REGISTER, &phi, *phi.getModule());
 
@@ -322,7 +317,7 @@ class RegisterAllocator {
                         // 3) write temp register to target(s)
                         for (auto* reader : readers) {
                             assert(stackSlot.contains(reader));
-                            spillToStackHere(PHI_TEMP_REGISTER, stackSlot[reader], *func.getParent());
+                            spillToStackHere(PHI_TEMP_REGISTER, stackSlot[reader], module);
                         }
                     }
                 }
@@ -367,7 +362,7 @@ class RegisterAllocator {
                     //           llvm::Instruction* instructionResult = cast<llvm::Instruction>(op);
                     //             assert(stackSlot.contains(instructionResult));
                     builder.SetInsertPoint(&inst);
-                    loadFromStack(getRegisterForOperand(i - skipped), op, *func.getParent());
+                    loadFromStack(getRegisterForOperand(i - skipped), op, module);
                     inst.setOperand(i, getI64(getRegisterForOperand(i - skipped)));
                 }
             }
@@ -381,19 +376,18 @@ class RegisterAllocator {
             builder.SetInsertPoint(returnInst);
             frame_destroy->eraseFromParent();
             if (dyn_cast<llvm::ConstantInt>(returnInst->getReturnValue())) {
-                builder.CreateCall(
-                    getInstruction(*func.getParent(), "R_MOV64ri", llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
-                    {getI64(RETURN_VALUE_REGISTER), returnInst->getReturnValue()});
+                builder.CreateCall(getInstruction(module, "R_MOV64ri", voidTy, {i64Ty, i64Ty}),
+                                   {getI64(RETURN_VALUE_REGISTER), returnInst->getReturnValue()});
             } else {
                 assert(stackSlot.contains(returnInst->getReturnValue()));
-                loadFromStack(RETURN_VALUE_REGISTER, returnInst->getReturnValue(), *func.getParent());
+                loadFromStack(RETURN_VALUE_REGISTER, returnInst->getReturnValue(), module);
             }
-            auto* destroy = builder.CreateCall(getInstruction(*func.getParent(), "R_FRAME_DESTROY", i64Ty, {}), {});
+            auto* destroy = builder.CreateCall(getInstruction(module, "R_FRAME_DESTROY", i64Ty, {}), {});
             returnInst->setOperand(0, destroy);
         }
     }
 
-    void updateStackSize(llvm::Function& func, llvm::CallInst* spillInit) {
+    void updateStackSize(llvm::Function& func, llvm::Instruction* spillInit) {
         std::uint64_t slots = stackSlot.size();
         auto* stack_alloc = cast<llvm::CallInst>(func.getEntryBlock().getFirstInsertionPt());
         std::uint64_t currVal = dyn_cast<llvm::ConstantInt>(stack_alloc->getOperand(0))->getZExtValue();
@@ -405,39 +399,36 @@ class RegisterAllocator {
 
     void transformCall(llvm::CallInst* oldCall) {
         builder.SetInsertPoint(oldCall);
+
         if (oldCall->arg_size() > 6) {
-            builder.CreateCall(
-                getInstruction(*oldCall->getModule(), "R_ADJSTACKDOWN", llvm::Type::getVoidTy(context), {i64Ty}),
-                {getI64(oldCall->arg_size() - 6)});
+            builder.CreateCall(getInstruction(*oldCall->getModule(), "R_ADJCALLSTACKDOWN", voidTy, {i64Ty}),
+                               {getI64((oldCall->arg_size() - 6) * 8)});
         }
         for (size_t i = 0; i < oldCall->arg_size(); ++i) {
             if (i < argumentLocationRegister.size()) {
                 if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
-                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri",
-                                                      llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
+                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri", voidTy, {i64Ty, i64Ty}),
                                        {getI64(argumentLocationRegister[i]), oldCall->getArgOperand(i)});
                 } else {
                     loadFromStack(argumentLocationRegister[i], oldCall->getArgOperand(i), *oldCall->getModule());
                 }
             } else {
+                // misusing the phi register here because 1 is taken...
                 if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
-                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri",
-                                                      llvm::Type::getVoidTy(context), {i64Ty, i64Ty}),
-                                       {getI64(DEFAULT_OUTPUT_REGISTER), oldCall->getArgOperand(i)});
+                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri", voidTy, {i64Ty, i64Ty}),
+                                       {getI64(PHI_TEMP_REGISTER), oldCall->getArgOperand(i)});
                 } else {
-                    loadFromStack(DEFAULT_OUTPUT_REGISTER, oldCall->getArgOperand(i), *oldCall->getModule());
+                    loadFromStack(PHI_TEMP_REGISTER, oldCall->getArgOperand(i), *oldCall->getModule());
                 }
-                spillToStackAtStackPointerOffset(DEFAULT_OUTPUT_REGISTER, (i - 6) * 8, *oldCall->getModule());
+                spillToStackAtStackPointerOffset(PHI_TEMP_REGISTER, (i - 6) * 8, *oldCall->getModule());
             }
         }
 
-        auto* func = getInstruction(*oldCall->getModule(), "R_CALL", llvm::Type::getVoidTy(context),
-                                    {llvm::PointerType::get(context, 0)});
+        auto* func = getInstruction(*oldCall->getModule(), "R_CALL", voidTy, {llvm::PointerType::get(context, 0)});
         builder.CreateCall(func, oldCall->getCalledFunction());
         if (oldCall->arg_size() > 6) {
-            builder.CreateCall(
-                getInstruction(*oldCall->getModule(), "R_ADJSTACKUP", llvm::Type::getVoidTy(context), {i64Ty}),
-                {getI64(oldCall->arg_size() - 6)});
+            builder.CreateCall(getInstruction(*oldCall->getModule(), "R_ADJCALLSTACKUP", voidTy, {i64Ty}),
+                               {getI64((oldCall->arg_size() - 6) * 8)});
         }
         spillToStackHere(RETURN_VALUE_REGISTER, stackSlot[oldCall], *oldCall->getModule());
     }
@@ -483,9 +474,9 @@ class RegisterAllocator {
                                 args.push_back(old_arg);
                             }
 
-                            auto* calledFunc = getInstruction(
-                                *func.getParent(), destShiftInstructions[it - destShiftInstructions_PreReg.begin()],
-                                llvm::Type::getVoidTy(context), std::vector<llvm::Type*>(call->arg_size() + 1, i64Ty));
+                            auto* calledFunc =
+                                getInstruction(module, destShiftInstructions[it - destShiftInstructions_PreReg.begin()],
+                                               voidTy, std::vector<llvm::Type*>(call->arg_size() + 1, i64Ty));
                             builder.SetInsertPoint(call);
                             builder.CreateCall(calledFunc, args);
                         } else if (auto it = std::find(firstOpDestInstructions_PreReg.begin(),
@@ -498,8 +489,8 @@ class RegisterAllocator {
                                 args.push_back(old_arg);
                             }
                             auto* calledFunc = getInstruction(
-                                *func.getParent(), firstOpDestInstructions[it - firstOpDestInstructions_PreReg.begin()],
-                                llvm::Type::getVoidTy(context), std::vector<llvm::Type*>(call->arg_size(), i64Ty));
+                                module, firstOpDestInstructions[it - firstOpDestInstructions_PreReg.begin()], voidTy,
+                                std::vector<llvm::Type*>(call->arg_size(), i64Ty));
                             builder.SetInsertPoint(call);
                             builder.CreateCall(calledFunc, args);
                         } else {
@@ -525,8 +516,8 @@ class RegisterAllocator {
                             args.push_back(old_arg);
                         }
 
-                        auto* calledFunc = getInstruction(*func.getParent(), newName, llvm::Type::getVoidTy(context),
-                                                          std::vector<llvm::Type*>(call->arg_size(), i64Ty));
+                        auto* calledFunc =
+                            getInstruction(module, newName, voidTy, std::vector<llvm::Type*>(call->arg_size(), i64Ty));
                         builder.SetInsertPoint(call);
                         builder.CreateCall(calledFunc, args);
                     }
@@ -555,12 +546,16 @@ class RegisterAllocator {
     void allocateFunction(llvm::Function& func) {
         llvm::SplitAllCriticalEdges(func);
         FrameState frameState = initState(func);
+
+        llvm::errs() << "here\n";
         spillArgsToStack(func);
+
         auto frameDestroys = allocaStackForEveryInst(func);
         loadSpilledOperands(func);
         handleReturns(func, frameDestroys);
         handlePhis(func);
         transformInstructions(func);
+        llvm::errs() << "here\n";
         updateStackSize(func, frameState.spillInit);
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
         stackSlot.clear();
@@ -569,7 +564,9 @@ class RegisterAllocator {
 };
 
 void allocateRegisters(llvm::Module& module, llvm::DenseSet<llvm::StringRef>& normalFunctions) {
+    llvm::errs() << "pre\n";
     RegisterAllocator allocator{&module, normalFunctions};
+    llvm::errs() << "post\n";
     for (auto& func : llvm::make_early_inc_range(module)) {
         if (func.isDeclaration())
             continue;
