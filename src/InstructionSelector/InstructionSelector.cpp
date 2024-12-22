@@ -1650,22 +1650,28 @@ void selectFunction(llvm::Function& func) {
     llvm::IRBuilder<> builder{&func.getEntryBlock(), func.getEntryBlock().getFirstInsertionPt()};
     auto* framepointer = builder.CreateCall(frame_setup_func, std::move(frame_setup_args));
 
+    auto constZero =
+        builder.CreateCall(getInstruction(*func.getParent(), "MOV64ri", llvm::Type::getInt64Ty(func.getContext()),
+                                          {
+                                              llvm::Type::getInt64Ty(func.getContext()),
+                                          }),
+                           {llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 0, true)});
+
     // replace all stack arguments with framepointer offset
     for (size_t i = 6; i < numArgs; ++i) {
         if (func.getArg(i)->getNumUses() == 1) { // only the frame-setup func
             continue;
         }
-        auto loadedVal =
-            builder.CreateCall(getInstruction(*func.getParent(), "MOV64rm", llvm::Type::getInt64Ty(func.getContext()),
-                                              {
-                                                  llvm::Type::getInt64Ty(func.getContext()),
-                                                  llvm::Type::getInt64Ty(func.getContext()),
-                                                  llvm::Type::getInt64Ty(func.getContext()),
-                                                  llvm::Type::getInt64Ty(func.getContext()),
-                                              }),
-                               {framepointer, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 8),
-                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), (i - 6)),
-                                llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 16)});
+        auto loadedVal = builder.CreateCall(
+            getInstruction(*func.getParent(), "MOV64rm", llvm::Type::getInt64Ty(func.getContext()),
+                           {
+                               llvm::Type::getInt64Ty(func.getContext()),
+                               llvm::Type::getInt64Ty(func.getContext()),
+                               llvm::Type::getInt64Ty(func.getContext()),
+                               llvm::Type::getInt64Ty(func.getContext()),
+                           }),
+            {framepointer, llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 8), constZero,
+             llvm::ConstantInt::get(llvm::Type::getInt64Ty(func.getContext()), 16 + 8 * (i - 6))});
         auto* arg = func.getArg(i);
         arg->replaceAllUsesWith(loadedVal);
         framepointer->setArgOperand(2 + (i - 6), arg); // reset it to the actual arg
@@ -1739,7 +1745,7 @@ void cleanUp(llvm::Function& func) {
 llvm::DenseSet<llvm::StringRef> doInstructionSelection(llvm::Module& module) {
     correctImmediates.clear();
     llvm::DenseSet<llvm::StringRef> normalFunctions;
-    
+
     for (auto& func : llvm::make_early_inc_range(module)) {
         if (!func.isDeclaration()) {
             normalFunctions.insert(func.getName());
