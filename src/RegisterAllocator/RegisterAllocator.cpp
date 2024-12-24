@@ -542,6 +542,35 @@ class RegisterAllocator {
         }
     }
 
+    void cleanUpLoadsAfterStores(llvm::Function& func) {
+        // clean up loads immediately after the corresponding stores
+        for (auto& bb : func) {
+            for (auto& instr : llvm::make_early_inc_range(bb)) {
+                if (auto* call = dyn_cast<llvm::CallInst>(&instr)) {
+                    if (call->getCalledFunction()->getName() != "R_MOV64rm") {
+                        continue;
+                    }
+                    std::uint64_t stackSlotLoad = cast<llvm::ConstantInt>(call->getArgOperand(4))->getZExtValue();
+                    std::uint64_t registerLoad = cast<llvm::ConstantInt>(call->getArgOperand(0))->getZExtValue();
+                    if (!call->getPrevNode()) {
+                        continue;
+                    }
+                    if (auto* prev = dyn_cast<llvm::CallInst>(instr.getPrevNode())) {
+                        if (prev->getCalledFunction()->getName() != "R_MOV64mr") {
+                            continue;
+                        }
+                        llvm::errs() << "testing...\n";
+                        if (stackSlotLoad == cast<llvm::ConstantInt>(prev->getArgOperand(3))->getZExtValue() &&
+                            registerLoad == cast<llvm::ConstantInt>(prev->getArgOperand(4))->getZExtValue()) {
+                            call->eraseFromParent(); // anyway the value is in the register
+                            llvm::errs() << "optimised a load\n";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
   public:
     void allocateFunction(llvm::Function& func) {
         llvm::SplitAllCriticalEdges(func);
@@ -557,6 +586,7 @@ class RegisterAllocator {
         transformInstructions(func);
         llvm::errs() << "here\n";
         updateStackSize(func, frameState.spillInit);
+        cleanUpLoadsAfterStores(func);
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
         stackSlot.clear();
         currStackSlot = 0;
