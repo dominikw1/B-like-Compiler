@@ -560,10 +560,6 @@ class SSAGenerator {
         auto paramNames = extractParameterNamesFromFunction(func);
         size_t numParams = paramNames.size();
 
-        if (auto* func = module->getFunction(funcName)) {
-            std::cerr << "function already exists...\n";
-        }
-
         std::vector<llvm::Type*> parameters(numParams, llvm::Type::getInt64Ty(*context));
         auto type = llvm::FunctionType::get(llvm::Type::getInt64Ty(*context), parameters, false);
         llvm::FunctionCallee funcCallee = module->getOrInsertFunction(funcName, type);

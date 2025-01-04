@@ -392,6 +392,9 @@ class RegisterAllocator {
         auto* stack_alloc = cast<llvm::CallInst>(func.getEntryBlock().getFirstInsertionPt());
         std::uint64_t currVal = dyn_cast<llvm::ConstantInt>(stack_alloc->getOperand(0))->getZExtValue();
         std::uint64_t supposedStackSize = slots * 8 + currVal;
+        if (supposedStackSize % 32 != 0) {
+            supposedStackSize = ((supposedStackSize + 31) / supposedStackSize) * supposedStackSize;
+        }
         stack_alloc->setOperand(0, getI64(supposedStackSize + 16));
         spillInit->setOperand(4, getI64(-supposedStackSize - 16));
         // the 16 offset might be unnecessary idk it segfaults if i dont do it because we overwrite fp
@@ -586,7 +589,7 @@ class RegisterAllocator {
         transformInstructions(func);
         llvm::errs() << "here\n";
         updateStackSize(func, frameState.spillInit);
-        cleanUpLoadsAfterStores(func);
+       // cleanUpLoadsAfterStores(func); 
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
         stackSlot.clear();
         currStackSlot = 0;
