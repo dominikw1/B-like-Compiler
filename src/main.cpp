@@ -1,3 +1,4 @@
+#include "AssemblyPrinter/ASMPrinter.h"
 #include "IRGenerator/SSAGeneration.h"
 #include "InstructionSelector/InstructionSelector.h"
 #include "Optimizer/Optimizer.h"
@@ -51,6 +52,8 @@ int main(int argc, char** argv) {
             return EXIT_SUCCESS;
         }
 
+        auto assembly = turnToASM(*IR.module);
+        llvm::outs() << assembly << "\n";
         return EXIT_SUCCESS;
     } catch (std::exception& e) {
         std::cerr << e.what() << "\n";

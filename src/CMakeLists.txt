@@ -3,6 +3,7 @@ add_subdirectory(IRGenerator)
 add_subdirectory(Optimizer)
 add_subdirectory(InstructionSelector)
 add_subdirectory(RegisterAllocator)
+add_subdirectory(AssemblyPrinter)
 
 add_executable(
     Compiler
@@ -16,4 +17,5 @@ target_link_libraries(
     Optimizer
     InstructionSelector
     RegisterAllocator
+    ASMPrinter
 )
