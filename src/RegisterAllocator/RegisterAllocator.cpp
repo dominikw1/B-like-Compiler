@@ -119,9 +119,6 @@ class RegisterAllocator {
             auto* arg = func.getArg(i);
             if (arg->getNumUses() == 1) {
                 continue;
-            } else {
-                arg->print(llvm::errs());
-                llvm::errs() << arg->getNumUses() << "\n";
             }
             if (i < 6) {
                 // passed in register
@@ -436,6 +433,7 @@ class RegisterAllocator {
         spillToStackHere(RETURN_VALUE_REGISTER, stackSlot[oldCall], *oldCall->getModule());
     }
 
+    // I am very paranoid about string lifetimes so better make them all literals :c
     constexpr static std::array<std::string_view, 23> destShiftInstructions_PreReg{
         "MOV64rr",    "MOV64ri",    "MOV32rr",    "MOV32ri",    "MOV64rm",    "MOV32rm",    "MOVZXB32rr", "MOVZXB32rm",
         "MOVZXW32rr", "MOVZXW32rm", "MOVSXB32rr", "MOVSXB32rm", "MOVSXB64rr", "MOVSXB64rm", "MOVSXW32rr", "MOVSXW32rm",
@@ -562,11 +560,9 @@ class RegisterAllocator {
                         if (prev->getCalledFunction()->getName() != "R_MOV64mr") {
                             continue;
                         }
-                        llvm::errs() << "testing...\n";
                         if (stackSlotLoad == cast<llvm::ConstantInt>(prev->getArgOperand(3))->getZExtValue() &&
                             registerLoad == cast<llvm::ConstantInt>(prev->getArgOperand(4))->getZExtValue()) {
                             call->eraseFromParent(); // anyway the value is in the register
-                            llvm::errs() << "optimised a load\n";
                         }
                     }
                 }
@@ -578,8 +574,6 @@ class RegisterAllocator {
     void allocateFunction(llvm::Function& func) {
         llvm::SplitAllCriticalEdges(func);
         FrameState frameState = initState(func);
-
-        llvm::errs() << "here\n";
         spillArgsToStack(func);
 
         auto frameDestroys = allocaStackForEveryInst(func);
@@ -587,9 +581,8 @@ class RegisterAllocator {
         handleReturns(func, frameDestroys);
         handlePhis(func);
         transformInstructions(func);
-        llvm::errs() << "here\n";
         updateStackSize(func, frameState.spillInit);
-       // cleanUpLoadsAfterStores(func); 
+        // cleanUpLoadsAfterStores(func); // TODO fix, this breaks some cases
         frameState.oldSetupCall->deleteValue(); // cleanup only afterwards - we still need the references to it before
         stackSlot.clear();
         currStackSlot = 0;
@@ -597,9 +590,7 @@ class RegisterAllocator {
 };
 
 void allocateRegisters(llvm::Module& module, llvm::DenseSet<llvm::StringRef>& normalFunctions) {
-    llvm::errs() << "pre\n";
     RegisterAllocator allocator{&module, normalFunctions};
-    llvm::errs() << "post\n";
     for (auto& func : llvm::make_early_inc_range(module)) {
         if (func.isDeclaration())
             continue;
