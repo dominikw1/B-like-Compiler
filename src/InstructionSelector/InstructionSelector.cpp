@@ -27,6 +27,10 @@ std::uint64_t getCondCode(llvm::CmpInst* cmpInst) {
         return 5;
     case llvm::ICmpInst::ICMP_SLT:
         return 12;
+    case llvm::ICmpInst::ICMP_SLE:
+        return 0xe;
+    case llvm::ICmpInst::ICMP_SGE:
+        return 0xd;
     case llvm::ICmpInst::ICMP_SGT:
         return 15;
     default:
