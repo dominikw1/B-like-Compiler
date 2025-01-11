@@ -50,31 +50,57 @@ class ASMPrinter {
         }
     }
 
-    constexpr static auto specialInstructions = {"R_SETcc8r"};
+    constexpr static auto specialInstructions = {"R_SETcc8r", "Jcc"};
 
     std::string handleSpecialInst(llvm::StringRef instrName, llvm::CallInst* call) {
         if (instrName == "R_SETcc8r") {
             auto mnemonic = [](uint32_t byte) {
                 switch (byte) {
                 case 4:
-                    return "SETE";
+                    return "sete";
                 case 5:
-                    return "SETNE";
+                    return "setne";
                 case 12:
-                    return "SETNGE";
+                    return "setnge";
                 case 0xe:
-                    return "SETNG";
+                    return "setng";
                 case 0xd:
-                    return "SETNL";
+                    return "setnl";
                 case 15:
-                    return "SETNLE";
+                    return "setnle";
                 default:
                     throw std::runtime_error(std::format("Unknown SET opcode {}", byte));
                 }
             }(cast<llvm::ConstantInt>(call->getArgOperand(1))->getSExtValue());
             auto registerMnem = regNames8Bit.at(cast<llvm::ConstantInt>(call->getArgOperand(0))->getSExtValue());
-            return std::format("{} {}\n", mnemonic, registerMnem);
+            return std::format("\t{} {}", mnemonic, registerMnem);
         }
+        if (instrName == "Jcc") {
+            std::string opcode = [](uint8_t opcode) {
+                switch (opcode) {
+                case 4:
+                    return "je";
+                case 5:
+                    return "jne";
+                case 12:
+                    return "jl";
+                case 0xe:
+                    return "jle";
+                case 0xd:
+                    return "jge";
+                case 15:
+                    return "jg";
+                default:
+                    throw std::runtime_error(std::format("Unknown jump opcode {}", opcode));
+                }
+            }(cast<llvm::ConstantInt>(call->getArgOperand(0))->getSExtValue());
+            llvm::BranchInst* br = cast<llvm::BranchInst>(call->getNextNode());
+            if (br->isUnconditional())
+                return ""; // handled at branch
+            return std::format("\t{} .L{}\n\tjmp .L{}", opcode, labelMap[br->getSuccessor(0)],
+                               labelMap[br->getSuccessor(1)]);
+        }
+
         throw std::runtime_error("Unknown special instruction");
     }
 
@@ -136,7 +162,7 @@ class ASMPrinter {
 
             if (auto* br = dyn_cast<llvm::BranchInst>(&instr)) {
                 if (br->isUnconditional()) {
-                    blockString += std::format("\tjmp .L{}", labelMap.at(br->getSuccessor(0)));
+                    blockString += std::format("\tjmp .L{}\n", labelMap.at(br->getSuccessor(0)));
                 } else {
                     assert(br->getNumSuccessors() == 2);
                     // ignore, we handled in jcc
