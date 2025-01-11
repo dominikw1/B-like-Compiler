@@ -11,6 +11,7 @@ namespace {
 
 class ASMPrinter {
     llvm::DenseMap<llvm::BasicBlock*, uint64_t> labelMap;
+    llvm::DenseMap<llvm::Function*, uint64_t> stackSize;
 
     constexpr static const std::array<std::string, 16> regNames{
         {"ax", "cx", "dx", "bx" /*?*/, "sp", "bp", "si", "di", "8", "9", "10", "11", "12", "13", "14", "15"}};
@@ -50,7 +51,7 @@ class ASMPrinter {
         }
     }
 
-    constexpr static auto specialInstructions = {"R_SETcc8r", "Jcc"};
+    constexpr static auto specialInstructions = {"R_SETcc8r", "Jcc", "R_CALL"};
 
     std::string handleSpecialInst(llvm::StringRef instrName, llvm::CallInst* call) {
         if (instrName == "R_SETcc8r") {
@@ -101,6 +102,18 @@ class ASMPrinter {
                                labelMap[br->getSuccessor(1)]);
         }
 
+        if (instrName == "R_CALL") {
+            // just throw everything on the stack that is not preserved across calls
+            std::string preamble = std::format("\tpush rcx\n\tpush rdx\n\tpush rsi\n\tpush rdi\n\tpush "
+                                               "r8\n\tpush r9\n\tpush r10\n\tpush r11\n");
+            // param passing has already happened?
+            std::string callInst =
+                std::format("\tcall {}\n", llvm::cast<llvm::Function>(call->getArgOperand(0))->getName().str());
+            // restore
+            std::string epilogue = std::format("\tpop r11\n\tpop r10\n\tpop r9\n\tpop r8\n\tpop rdi\n\tpop "
+                                               "rdi\n\tpop rsi\n\tpop rdx\n");
+            return preamble + callInst + epilogue;
+        }
         throw std::runtime_error("Unknown special instruction");
     }
 
@@ -175,12 +188,33 @@ class ASMPrinter {
                     blockString += "\tpush rbp\n";
                     blockString += "\tmov rbp, rsp\n";
                     assert(llvm::dyn_cast<llvm::ConstantInt>(call->getArgOperand(0)));
-                    blockString += std::format("\tsub esp, {}\n",
+                    blockString += std::format("\tsub rsp, {}\n",
                                                llvm::cast<llvm::ConstantInt>(call->getArgOperand(0))->getSExtValue());
+                    stackSize[block.getParent()] =
+                        llvm::cast<llvm::ConstantInt>(call->getArgOperand(0))->getSExtValue();
+                    if (block.getParent()->getName() == "main")
+                        continue;
+
+                    blockString += "\tpush rbp\n";
+                    blockString += "\tpush r12\n";
+                    blockString += "\tpush r13\n";
+                    blockString += "\tpush r14\n";
+                    blockString += "\tpush r15\n";
                     continue;
                 }
                 if (call->getCalledFunction()->getName() == "R_FRAME_DESTROY") {
+                    if (block.getParent()->getName() == "main") {
+                        blockString += "\tleave\n";
+                        continue;
+                    }
+                    blockString += "\tpop r15\n";
+                    blockString += "\tpop r14\n";
+                    blockString += "\tpop r13\n";
+                    blockString += "\tpop r12\n";
+                    blockString += "\tpop rbp\n";
+
                     blockString += "\tleave\n";
+                    blockString += "\tret\n";
                     continue;
                 }
 
@@ -205,7 +239,7 @@ class ASMPrinter {
         for (auto& bb : function) {
             funcStr += turnBlockToASM(bb);
         }
-        funcStr += std::format(".size   {}, .-{}", funcName, funcName);
+        funcStr += std::format(".size   {}, .-{}\n", funcName, funcName);
         return funcStr;
     }
 };
