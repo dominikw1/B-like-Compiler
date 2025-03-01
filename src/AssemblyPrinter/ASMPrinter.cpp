@@ -14,7 +14,7 @@ class ASMPrinter {
     llvm::DenseMap<llvm::Function*, uint64_t> stackSize;
 
     constexpr static const std::array<std::string, 16> regNames{
-        {"ax", "cx", "dx", "bx" /*?*/, "sp", "bp", "si", "di", "8", "9", "10", "11", "12", "13", "14", "15"}};
+        {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "8", "9", "10", "11", "12", "13", "14", "15"}};
 
     constexpr static const std::array<std::string, 16> regNames8Bit{"al",   "cl",   "dl",   "bl",  "spl",  "bpl",
                                                                     "sil",  "dil",  "r8b",  "r9b", "r10b", "r11b",
