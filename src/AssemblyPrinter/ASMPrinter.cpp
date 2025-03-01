@@ -51,7 +51,7 @@ class ASMPrinter {
         }
     }
 
-    constexpr static auto specialInstructions = {"R_SETcc8r", "Jcc", "R_CALL"};
+    constexpr static auto specialInstructions = {"R_SETcc8r", "Jcc", "R_CALL","R_ADJCALLSTACKDOWN","R_ADJCALLSTACKUP"};
 
     std::string handleSpecialInst(llvm::StringRef instrName, llvm::CallInst* call) {
         if (instrName == "R_SETcc8r") {
@@ -111,9 +111,16 @@ class ASMPrinter {
                 std::format("\tcall {}\n", llvm::cast<llvm::Function>(call->getArgOperand(0))->getName().str());
             // restore
             std::string epilogue = std::format("\tpop r11\n\tpop r10\n\tpop r9\n\tpop r8\n\tpop rdi\n\tpop "
-                                               "rdi\n\tpop rsi\n\tpop rdx\n");
+                                               "rdi\n\tpop rsi\n\tpop rdx");
             return preamble + callInst + epilogue;
         }
+        if(instrName == "R_ADJCALLSTACKUP") {
+            return std::format("\tadd rsp, {}", cast<llvm::ConstantInt>(call->getArgOperand(0))->getSExtValue());
+        }
+        if(instrName == "R_ADJCALLSTACKDOWN") {
+            return std::format("\tsub rsp, {}", cast<llvm::ConstantInt>(call->getArgOperand(0))->getSExtValue());
+        }
+
         throw std::runtime_error("Unknown special instruction");
     }
 

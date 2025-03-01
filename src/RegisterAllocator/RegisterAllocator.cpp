@@ -389,9 +389,7 @@ class RegisterAllocator {
         auto* stack_alloc = cast<llvm::CallInst>(func.getEntryBlock().getFirstInsertionPt());
         std::uint64_t currVal = dyn_cast<llvm::ConstantInt>(stack_alloc->getOperand(0))->getZExtValue();
         std::uint64_t supposedStackSize = slots * 8 + currVal;
-        if (supposedStackSize % 32 != 0) {
-            supposedStackSize = ((supposedStackSize + 31) / supposedStackSize) * supposedStackSize;
-        }
+       
         stack_alloc->setOperand(0, getI64(supposedStackSize + 16));
         spillInit->setOperand(4, getI64(-supposedStackSize - 16));
         // the 16 offset might be unnecessary idk it segfaults if i dont do it because we overwrite fp
@@ -400,10 +398,6 @@ class RegisterAllocator {
     void transformCall(llvm::CallInst* oldCall) {
         builder.SetInsertPoint(oldCall);
 
-        if (oldCall->arg_size() > 6) {
-            builder.CreateCall(getInstruction(*oldCall->getModule(), "R_ADJCALLSTACKDOWN", voidTy, {i64Ty}),
-                               {getI64((oldCall->arg_size() - 6) * 8)});
-        }
         for (size_t i = 0; i < oldCall->arg_size(); ++i) {
             if (i < argumentLocationRegister.size()) {
                 if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
@@ -413,6 +407,10 @@ class RegisterAllocator {
                     loadFromStack(argumentLocationRegister[i], oldCall->getArgOperand(i), *oldCall->getModule());
                 }
             } else {
+                if (i == 6) {
+                    builder.CreateCall(getInstruction(*oldCall->getModule(), "R_ADJCALLSTACKDOWN", voidTy, {i64Ty}),
+                                       {getI64((oldCall->arg_size() - 6) * 8)});
+                }
                 // misusing the phi register here because 1 is taken...
                 if (dyn_cast<llvm::ConstantInt>(oldCall->getArgOperand(i))) {
                     builder.CreateCall(getInstruction(*oldCall->getModule(), "R_MOV64ri", voidTy, {i64Ty, i64Ty}),
